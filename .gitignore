@@ -1,0 +1,9 @@
+node_modules
+dist
+.npm-cache
+.codex-backup
+*.tsbuildinfo
+qa/*profile*/
+qa/*/
+qa/**/*.log
+qa/

@@ -1,0 +1,3853 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+// GENERATED from dc-runtime/src/*.ts — do not edit. Rebuild with `cd dc-runtime && bun run build`.
+"use strict";
+(() => {
+  var __defProp = Object.defineProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
+  // src/react.ts
+  function getReact() {
+    const R = window.React;
+    if (!R) throw new Error("dc-runtime: window.React is not available yet");
+    return R;
+  }
+  function getReactDOM() {
+    const RD = window.ReactDOM;
+    if (!RD) throw new Error("dc-runtime: window.ReactDOM is not available yet");
+    return RD;
+  }
+  var h = ((...args) => getReact().createElement(
+    ...args
+  ));
+
+  // src/parse.ts
+  function parseDcDocument(doc) {
+    const dc = doc.querySelector("x-dc");
+    if (!dc) return null;
+    const scriptEl = doc.querySelector("script[data-dc-script]");
+    const { props, preview } = parseDataProps(
+      scriptEl?.getAttribute("data-props") ?? null
+    );
+    return {
+      template: dc.innerHTML,
+      js: scriptEl ? scriptEl.textContent || "" : "",
+      props,
+      preview
+    };
+  }
+  function parseDcText(src) {
+    const openMatch = /<x-dc(?:\s[^>]*)?>/.exec(src);
+    if (!openMatch) return null;
+    const close = src.lastIndexOf("</x-dc>");
+    if (close === -1 || close < openMatch.index) return null;
+    const template = src.slice(openMatch.index + openMatch[0].length, close);
+    const doc = new DOMParser().parseFromString(src, "text/html");
+    const scriptEl = doc.querySelector("script[data-dc-script]");
+    const { props, preview } = parseDataProps(
+      scriptEl?.getAttribute("data-props") ?? null
+    );
+    return {
+      template,
+      js: scriptEl ? scriptEl.textContent || "" : "",
+      props,
+      preview
+    };
+  }
+  function parseDataProps(raw) {
+    if (!raw) return { props: null, preview: null };
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { props: null, preview: null };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { props: null, preview: null };
+    }
+    const obj = parsed;
+    const preview = obj.$preview && typeof obj.$preview === "object" ? obj.$preview : null;
+    const rest = {};
+    for (const k of Object.keys(obj)) {
+      if (k[0] !== "$") rest[k] = obj[k];
+    }
+    return { props: Object.keys(rest).length ? rest : null, preview };
+  }
+  function dcNameFromPath(pathname) {
+    let p = pathname || "";
+    try {
+      p = decodeURIComponent(p);
+    } catch {
+    }
+    const base = p.split("/").pop() || "Root";
+    return base.replace(/\.dc\.html$/, "").replace(/\.html?$/, "") || "Root";
+  }
+
+  // src/boot.ts
+  var BASE_CSS = `
+    .sc-placeholder{background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;overflow:hidden}
+    @keyframes sc-shine{0%{background-position:100% 50%}100%{background-position:0% 50%}}
+    html.sc-dc-streaming .sc-placeholder,
+    html.sc-dc-streaming .sc-interp.sc-missing{position:relative;
+      background:color-mix(in srgb,currentColor 5%,transparent);
+      border-color:transparent}
+    html.sc-dc-streaming .sc-placeholder::before,
+    html.sc-dc-streaming .sc-interp.sc-missing::before{content:'';
+      position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(90deg,rgba(217,119,87,0) 25%,rgba(247,225,211,.95) 37%,rgba(217,119,87,0) 63%);
+      background-size:400% 100%;animation:sc-shine 1.4s ease infinite}
+    html.sc-dc-streaming .sc-placeholder:nth-child(n+9 of .sc-placeholder)::before,
+    html.sc-dc-streaming .sc-interp.sc-missing:nth-child(n+9 of .sc-interp.sc-missing)::before{animation:none;
+      background:color-mix(in srgb,currentColor 8%,transparent)}
+    .sc-placeholder-error{padding:4px 8px;font:11px/1.4 ui-monospace,monospace;
+      color:rgba(0,0,0,.7);word-break:break-word}
+    .sc-interp.sc-missing{display:inline-block;width:2em;height:1em;overflow:hidden;
+      vertical-align:text-bottom;background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;color:transparent;
+      user-select:none}
+    .sc-interp.sc-unresolved{font-family:ui-monospace,monospace;font-size:.85em;
+      color:rgba(0,0,0,.5);background:rgba(0,0,0,.05);border-radius:3px;
+      padding:0 3px}
+    .sc-host.sc-has-error{position:relative}
+    .sc-logic-error{position:absolute;top:8px;left:8px;z-index:2147483647;max-width:60ch;
+      padding:6px 10px;background:#b00020;color:#fff;font:12px/1.4 ui-monospace,monospace;
+      border-radius:4px;white-space:pre-wrap;pointer-events:none}
+    /* Mirrors PRINT_BASELINE_CSS in apps/web deck-stage-export.ts \u2014 keep both
+       in sync until dc-runtime regains a build step. */
+    @media print {
+      @page { margin: 0.5cm; }
+      section, article, figure, table { break-inside: avoid; }
+      *, *::before, *::after {
+        print-color-adjust: exact; -webkit-print-color-adjust: exact;
+        backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        animation-delay: -99s !important; animation-duration: .001s !important;
+        animation-iteration-count: 1 !important; animation-fill-mode: both !important;
+        animation-play-state: running !important; transition-duration: 0s !important;
+      }
+    }
+  `;
+  var FULL_PAGE_CSS = "html,body{height:100%;margin:0}#dc-root,#dc-root>.sc-host{height:100%}";
+  function rootNameForDocument(doc, loc) {
+    let bootPath = loc.pathname || "";
+    if (!/\.dc\.html?$/i.test(safeDecode(bootPath))) {
+      try {
+        bootPath = new URL(doc.baseURI || "/").pathname;
+      } catch {
+      }
+    }
+    return dcNameFromPath(bootPath);
+  }
+  function safeDecode(s) {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  }
+  function boot(runtime, doc = document) {
+    const parsed = parseDcDocument(doc);
+    if (!parsed) return null;
+    const React = getReact();
+    const rootName = rootNameForDocument(doc, location);
+    runtime.markFetched(rootName);
+    runtime.adoptParsed(rootName, parsed);
+    fetch(location.href).then((res) => res.ok ? res.text() : "").then((t) => {
+      const raw = t ? parseDcText(t) : null;
+      if (raw?.template) runtime.updateHtml(rootName, raw.template);
+    }).catch(() => {
+    });
+    const dc = doc.querySelector("x-dc");
+    const hostEl = doc.createElement("div");
+    hostEl.id = "dc-root";
+    dc.replaceWith(hostEl);
+    if (!parsed.preview) {
+      const s = doc.createElement("style");
+      s.textContent = FULL_PAGE_CSS;
+      doc.head.appendChild(s);
+    }
+    const Root = runtime.getDC(rootName);
+    const entry = runtime.registry.get(rootName);
+    function StandaloneRoot() {
+      const [, setTick] = React.useState(0);
+      React.useEffect(() => {
+        const sub = () => setTick((n) => n + 1);
+        entry.subs.add(sub);
+        return () => {
+          entry.subs.delete(sub);
+        };
+      }, []);
+      return h(Root, entry.propOverrides || null);
+    }
+    const ReactDOM = getReactDOM();
+    if (ReactDOM.createRoot)
+      ReactDOM.createRoot(hostEl).render(h(StandaloneRoot));
+    else ReactDOM.render(h(StandaloneRoot), hostEl);
+    return rootName;
+  }
+
+  // src/expr.ts
+  var IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*/;
+  var NUMBER_RE = /^-?\d+(\.\d+)?$/;
+  function resolve(vals, src) {
+    const expr = String(src).trim();
+    if (!expr) return void 0;
+    if (expr[0] === "(" && expr[expr.length - 1] === ")" && parensWrapWhole(expr)) {
+      return resolve(vals, expr.slice(1, -1));
+    }
+    const eq = findTopLevelEquality(expr);
+    if (eq) {
+      const lv = resolve(vals, expr.slice(0, eq.index));
+      const rv = resolve(vals, expr.slice(eq.index + eq.op.length));
+      switch (eq.op) {
+        case "===":
+          return lv === rv;
+        case "!==":
+          return lv !== rv;
+        case "==":
+          return lv == rv;
+        default:
+          return lv != rv;
+      }
+    }
+    if (expr[0] === "!") return !resolve(vals, expr.slice(1));
+    if (expr === "true") return true;
+    if (expr === "false") return false;
+    if (expr === "null") return null;
+    if (expr === "undefined") return void 0;
+    if (NUMBER_RE.test(expr)) return Number(expr);
+    if (expr.length >= 2 && (expr[0] === '"' || expr[0] === "'") && expr[expr.length - 1] === expr[0]) {
+      return expr.slice(1, -1);
+    }
+    return resolvePath(vals, expr);
+  }
+  function parensWrapWhole(expr) {
+    let depth = 0;
+    for (let i = 0; i < expr.length - 1; i++) {
+      if (expr[i] === "(") depth++;
+      else if (expr[i] === ")") {
+        depth--;
+        if (depth === 0) return false;
+      }
+    }
+    return true;
+  }
+  function findTopLevelEquality(expr) {
+    let depth = 0;
+    for (let i = 0; i < expr.length; i++) {
+      const c = expr[i];
+      if (c === "[" || c === "(") depth++;
+      else if (c === "]" || c === ")") depth--;
+      else if (depth === 0 && (c === "=" || c === "!") && expr[i + 1] === "=") {
+        if (i > 0 && (expr[i - 1] === "=" || expr[i - 1] === "!")) continue;
+        if (!expr.slice(0, i).trim()) continue;
+        const op = expr[i + 2] === "=" ? c + "==" : c + "=";
+        return { index: i, op };
+      }
+    }
+    return null;
+  }
+  function resolvePath(vals, expr) {
+    const head = expr.match(IDENT_RE);
+    if (!head) return void 0;
+    let cur = vals == null ? void 0 : vals[head[0]];
+    let i = head[0].length;
+    while (i < expr.length) {
+      if (expr[i] === ".") {
+        const m = expr.slice(i + 1).match(IDENT_RE) || expr.slice(i + 1).match(/^\d+/);
+        if (!m) return void 0;
+        cur = cur == null ? void 0 : cur[m[0]];
+        i += 1 + m[0].length;
+      } else if (expr[i] === "[") {
+        let depth = 1;
+        let j = i + 1;
+        while (j < expr.length && depth > 0) {
+          if (expr[j] === "[") depth++;
+          else if (expr[j] === "]") {
+            depth--;
+            if (depth === 0) break;
+          }
+          j++;
+        }
+        if (depth !== 0) return void 0;
+        const key = resolve(vals, expr.slice(i + 1, j));
+        cur = cur == null ? void 0 : cur[key];
+        i = j + 1;
+      } else {
+        return void 0;
+      }
+    }
+    return cur;
+  }
+
+  // src/encode.ts
+  var CAMEL_ATTR = "sc-camel-";
+  var RAW_WRAP = {
+    select: "sc-raw-select",
+    table: "sc-raw-table",
+    tbody: "sc-raw-tbody",
+    thead: "sc-raw-thead",
+    tfoot: "sc-raw-tfoot",
+    tr: "sc-raw-tr",
+    td: "sc-raw-td",
+    th: "sc-raw-th",
+    caption: "sc-raw-caption"
+  };
+  var RAW_UNWRAP = Object.fromEntries(
+    Object.entries(RAW_WRAP).map(([k, v]) => [v, k])
+  );
+  var EVENT_MAP = {
+    onclick: "onClick",
+    onchange: "onChange",
+    oninput: "onInput",
+    onsubmit: "onSubmit",
+    onkeydown: "onKeyDown",
+    onkeyup: "onKeyUp",
+    onkeypress: "onKeyPress",
+    onmousedown: "onMouseDown",
+    onmouseup: "onMouseUp",
+    onmouseenter: "onMouseEnter",
+    onmouseleave: "onMouseLeave",
+    onfocus: "onFocus",
+    onblur: "onBlur",
+    ondoubleclick: "onDoubleClick",
+    oncontextmenu: "onContextMenu"
+  };
+  var ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`;
+  var IMPORT_SELF_CLOSE_RE = new RegExp(
+    "<(x-import|dc-import)(" + ATTRS + ")/>",
+    "gi"
+  );
+  var CAMEL_ATTR_RE = /(\s)([a-z]+[A-Z][A-Za-z0-9]*)(\s*=)/g;
+  function encodeCase(html) {
+    html = html.replace(
+      IMPORT_SELF_CLOSE_RE,
+      (_, t, a) => "<" + t + a + "></" + t + ">"
+    );
+    html = html.replace(/<helmet(\s|>)/gi, "<sc-helmet$1");
+    html = html.replace(/<\/helmet\s*>/gi, "</sc-helmet>");
+    html = html.replace(
+      CAMEL_ATTR_RE,
+      (_, sp, name, eq) => sp + CAMEL_ATTR + name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()) + eq
+    );
+    for (const [real, alias] of Object.entries(RAW_WRAP)) {
+      html = html.replace(
+        new RegExp("(</?)" + real + "(?=[\\s>])", "gi"),
+        "$1" + alias
+      );
+    }
+    return html;
+  }
+  function kebabToCamel(s) {
+    return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  }
+  function cssToObj(css) {
+    const o = {};
+    for (const decl of css.split(";")) {
+      const i = decl.indexOf(":");
+      if (i < 0) continue;
+      const prop = decl.slice(0, i).trim();
+      o[prop.startsWith("--") ? prop : kebabToCamel(prop)] = decl.slice(i + 1).trim();
+    }
+    return o;
+  }
+  function compileAttr(raw) {
+    const whole = raw.match(/^\s*\{\{([\s\S]+?)\}\}\s*$/);
+    if (whole) {
+      const path = whole[1];
+      return (vals) => resolve(vals, path);
+    }
+    if (raw.includes("{{")) {
+      const parts = raw.split(/\{\{([\s\S]+?)\}\}/g);
+      return (vals) => parts.map((s, i) => i & 1 ? resolve(vals, s) ?? "" : s).join("");
+    }
+    return () => raw;
+  }
+
+  // src/compile.ts
+  function collectProps(node, isComponent, host) {
+    const propGetters = [];
+    const pseudoClasses = [];
+    let hintSize = null;
+    for (const { name, value } of [...node.attributes]) {
+      if (name === "sc-name" || name === "data-dc-tpl") continue;
+      let key = name;
+      if (key.startsWith(CAMEL_ATTR))
+        key = kebabToCamel(key.slice(CAMEL_ATTR.length));
+      if (key === "hint-size") {
+        hintSize = value;
+        continue;
+      }
+      if (key.startsWith("style-")) {
+        pseudoClasses.push(host.pseudoClass(key.slice(6), value));
+        continue;
+      }
+      if (isComponent) {
+        if (key.includes("-")) key = kebabToCamel(key);
+      } else {
+        if (key === "class") key = "className";
+        else if (key === "for") key = "htmlFor";
+        else if (key.startsWith("on"))
+          key = EVENT_MAP[key] || "on" + key[2].toUpperCase() + key.slice(3);
+      }
+      propGetters.push([key, compileAttr(value)]);
+    }
+    return { propGetters, pseudoClasses, hintSize };
+  }
+  var HOST_STYLE_PROPS = /* @__PURE__ */ new Set([
+    "position",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "inset",
+    "width",
+    "height",
+    "z-index",
+    "transform"
+  ]);
+  function hostPositionStyle(style) {
+    const all = typeof style === "string" ? cssToObj(style) : style != null && typeof style === "object" ? style : null;
+    if (!all) return void 0;
+    const out = {};
+    for (const [k, v] of Object.entries(all)) {
+      const kebab = k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+      if (HOST_STYLE_PROPS.has(kebab)) out[k] = v;
+    }
+    return Object.keys(out).length ? out : void 0;
+  }
+  function compileTemplate(html, host) {
+    const tpl = document.createElement("template");
+    //! nosemgrep: direct-inner-html-assignment
+    tpl.innerHTML = encodeCase(html);
+    let tplN = 0;
+    (function stamp(node) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        node.setAttribute("data-dc-tpl", String(tplN++));
+      }
+      for (const c of node.childNodes) stamp(c);
+    })(tpl.content);
+    const builders = walkChildren(tpl.content, host);
+    const render = ((vals, ctx) => builders.map((b, i) => b(vals || {}, ctx, i)));
+    render.__annotated = tpl.innerHTML;
+    return render;
+  }
+  function walkChildren(node, host) {
+    return [...node.childNodes].map((c) => walk(c, host)).filter((b) => b != null);
+  }
+  function walk(node, host) {
+    if (node.nodeType === Node.TEXT_NODE) return walkText(node);
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+    const el = node;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "sc-for") return walkFor(el, host);
+    if (tag === "sc-if") return walkIf(el, host);
+    if (tag === "x-import") return walkXImport(el, host);
+    if (tag === "sc-helmet") return host.helmet(el);
+    if (tag === "dc-import") return walkComponent(el, host);
+    return walkElement(el, host);
+  }
+  var warnedHoles = /* @__PURE__ */ new Set();
+  function warnUnresolved(ctx, what) {
+    const key = (ctx?.__name || "?") + "\0" + what;
+    if (warnedHoles.has(key)) return;
+    warnedHoles.add(key);
+    console.warn("[dc-runtime] " + (ctx?.__name || "template") + ": " + what);
+  }
+  function walkText(node) {
+    const txt = node.nodeValue ?? "";
+    if (!txt.includes("{{")) {
+      if (!txt.trim() && !txt.includes(" ")) return null;
+      return () => txt;
+    }
+    const parts = txt.split(/\{\{([\s\S]+?)\}\}/g);
+    return (vals, ctx, key) => h(
+      getReact().Fragment,
+      { key },
+      ...parts.map((p, i) => {
+        if (!(i & 1)) return p;
+        const v = resolve(vals, p);
+        if (v === void 0) {
+          if (!ctx?.__streamingNow) {
+            if (document.body?.hasAttribute("data-dc-editor-on")) {
+              return h(
+                "span",
+                { key: i, className: "sc-interp sc-unresolved" },
+                "{{ " + p.trim() + " }}"
+              );
+            }
+            warnUnresolved(
+              ctx,
+              "{{ " + p.trim() + " }} never resolved \u2014 rendered as empty"
+            );
+            return null;
+          }
+          return h(
+            "span",
+            { key: i, className: "sc-interp sc-missing" },
+            p.trim()
+          );
+        }
+        if (getReact().isValidElement(v) || Array.isArray(v)) {
+          return h(getReact().Fragment, { key: i }, v);
+        }
+        if (v === null || typeof v === "boolean") return null;
+        return h("span", { key: i, className: "sc-interp" }, String(v));
+      })
+    );
+  }
+  function walkFor(el, host) {
+    const listGet = compileAttr(el.getAttribute("list") || "");
+    const asName = el.getAttribute("as") || "item";
+    const hintN = parseInt(el.getAttribute("hint-placeholder-count") || "0", 10);
+    const kids = walkChildren(el, host);
+    const listSrc = el.getAttribute("list") || "";
+    return (vals, ctx, key) => {
+      let list = listGet(vals);
+      if (!Array.isArray(list)) {
+        if (!ctx?.__streamingNow) {
+          if (list !== void 0 && list !== null) {
+            warnUnresolved(
+              ctx,
+              'sc-for list="' + listSrc + '" is not an array (' + typeof list + ")"
+            );
+          }
+          list = [];
+        } else {
+          list = hintN > 0 ? Array(hintN).fill(void 0) : [];
+        }
+      }
+      return h(
+        getReact().Fragment,
+        { key },
+        list.map((item, i) => {
+          const sub = { ...vals, [asName]: item, $index: i };
+          return h(
+            getReact().Fragment,
+            { key: i },
+            kids.map((b, j) => b(sub, ctx, j))
+          );
+        })
+      );
+    };
+  }
+  function walkIf(el, host) {
+    const valGet = compileAttr(el.getAttribute("value") || "");
+    const hintRaw = el.getAttribute("hint-placeholder-val");
+    const hintGet = hintRaw != null ? compileAttr(hintRaw) : null;
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      let v = valGet(vals);
+      if (v === void 0 && hintGet && ctx?.__streamingNow) v = hintGet(vals);
+      return v ? h(
+        getReact().Fragment,
+        { key },
+        kids.map((b, j) => b(vals, ctx, j))
+      ) : null;
+    };
+  }
+  function walkComponent(el, host) {
+    const name = el.getAttribute("name") || el.getAttribute("component") || "";
+    el.removeAttribute("name");
+    el.removeAttribute("component");
+    const tplId = el.getAttribute("data-dc-tpl");
+    const styleRaw = el.getAttribute("style");
+    el.removeAttribute("style");
+    const styleGet = styleRaw != null ? compileAttr(styleRaw) : null;
+    const { propGetters, hintSize } = collectProps(el, true, host);
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      const props = {
+        key,
+        __hintSize: hintSize,
+        __tplId: tplId,
+        __hostStyle: styleGet ? hostPositionStyle(styleGet(vals)) : void 0
+      };
+      for (const [k, g] of propGetters) props[k] = g(vals);
+      if (kids.length) props.children = kids.map((b, j) => b(vals, ctx, j));
+      return h(host.component(name), props);
+    };
+  }
+  function walkXImport(el, host) {
+    const globalNameGet = compileAttr(
+      el.getAttribute("component-from-global-scope") || ""
+    );
+    const exportNameGet = compileAttr(
+      el.getAttribute("component") || el.getAttribute("name") || ""
+    );
+    const url = el.getAttribute("from") || el.getAttribute("src") || el.getAttribute("import") || "";
+    const kind = /\.(jsx|tsx)(\?|#|$)/i.test(url) ? "jsx" : "js";
+    const tplId = el.getAttribute("data-dc-tpl");
+    const styleRaw = el.getAttribute("style");
+    el.removeAttribute("style");
+    const styleGet = styleRaw != null ? compileAttr(styleRaw) : null;
+    const wrap = tplId != null || styleGet != null;
+    const { propGetters, hintSize } = collectProps(el, true, host);
+    const hasContent = el.children.length > 0 || !!(el.textContent || "").trim();
+    const kids = hasContent ? walkChildren(el, host) : [];
+    const urlBindable = url.includes("{{");
+    if (url && !urlBindable) host.loadExternal(kind, url);
+    const evalName = (g, vals) => {
+      const v = g(vals);
+      const s = v == null ? "" : String(v);
+      return s.includes("{{") ? "" : s;
+    };
+    return (vals, ctx, key) => {
+      const globalName = evalName(globalNameGet, vals);
+      const name = globalName || evalName(exportNameGet, vals);
+      const C = !name || urlBindable ? null : globalName ? host.resolveExternalGlobal(url, globalName) : host.resolveExternal(url, name);
+      const hostStyle = styleGet ? hostPositionStyle(styleGet(vals)) : void 0;
+      const wrapper = wrap ? {
+        key,
+        className: "sc-host-x",
+        "data-dc-tpl": tplId,
+        style: hostStyle || { display: "contents" }
+      } : null;
+      if (!C) {
+        const error = urlBindable ? "x-import `from` cannot contain {{ \u2026 }} \u2014 module URLs are resolved at parse time; use a literal URL" : host.resolveExternalError(url, name);
+        const ph = host.placeholder({
+          key: wrapper ? void 0 : key,
+          name,
+          hintSize,
+          error
+        });
+        return wrapper ? h("div", wrapper, ph) : ph;
+      }
+      const props = wrapper ? {} : { key };
+      let unresolvedHole = false;
+      for (const [k, g] of propGetters) {
+        if (k === "component" || k === "componentFromGlobalScope" || k === "name" || k === "from" || k === "src" || k === "import") {
+          continue;
+        }
+        const v = g(vals);
+        if (v === void 0) unresolvedHole = true;
+        props[k] = v;
+      }
+      if (unresolvedHole && ctx?.__htmlStreamingNow) {
+        const ph = host.placeholder({
+          key: wrapper ? void 0 : key,
+          name,
+          hintSize,
+          error: null
+        });
+        return wrapper ? h("div", wrapper, ph) : ph;
+      }
+      if (kids.length) props.children = kids.map((b, j) => b(vals, ctx, j));
+      return wrapper ? h("div", wrapper, h(C, props)) : h(C, props);
+    };
+  }
+  function walkElement(el, host) {
+    const realTag = RAW_UNWRAP[el.localName] || el.localName;
+    const tplId = el.getAttribute("data-dc-tpl");
+    const { propGetters, pseudoClasses } = collectProps(el, false, host);
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      const props = { key, "data-dc-tpl": tplId };
+      for (const [k, g] of propGetters) {
+        let v = g(vals);
+        if (k === "style" && typeof v === "string") v = cssToObj(v);
+        if ((k === "value" || k === "checked") && v === void 0) {
+          v = k === "checked" ? false : "";
+        }
+        props[k] = v;
+      }
+      if (pseudoClasses.length) {
+        props.className = [props.className, ...pseudoClasses].filter(Boolean).join(" ");
+      }
+      return h(realTag, props, ...kids.map((b, j) => b(vals, ctx, j)));
+    };
+  }
+
+  // src/logic.ts
+  var StreamableLogic = class {
+    constructor(props) {
+      __publicField(this, "props");
+      __publicField(this, "state", {});
+      /** Back-pointer to the wrapper component, installed after construction. */
+      __publicField(this, "__host");
+      this.props = props || {};
+    }
+    setState(update, cb) {
+      this.__host && this.__host.__setLogicState(update, cb);
+    }
+    forceUpdate() {
+      this.__host && this.__host.forceUpdate();
+    }
+    updateTooltipPositions() {
+    if (typeof document === 'undefined') return;
+    const tips = document.querySelectorAll('.spb-tip[data-tooltip]');
+    tips.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      el.style.setProperty('--spb-tip-left', (rect.left + rect.width / 2) + 'px');
+      el.style.setProperty('--spb-tip-top', rect.top + 'px');
+    });
+  }
+
+  componentDidMount() {
+    }
+    componentDidUpdate(_prevProps) {
+    }
+    componentDidUpdate() {
+    this.updateTooltipPositions();
+  }
+
+  componentWillUnmount() {
+    }
+    /** The flat object the template renders against (merged over props). */
+    renderVals() {
+      return {};
+    }
+  };
+  function evalDcLogic(src) {
+    //! nosemgrep: eval-and-function-constructor
+    const fn = new Function(
+      "DCLogic",
+      "StreamableLogic",
+      "React",
+      src + '\n;return (typeof Component!=="undefined"&&Component)||undefined;'
+    );
+    return fn(StreamableLogic, StreamableLogic, getReact());
+  }
+
+  // src/component.ts
+  function shallowEqual(a, b) {
+    if (!b) return false;
+    const ak = Object.keys(a).filter((k) => k !== "children");
+    const bk = Object.keys(b).filter((k) => k !== "children");
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) if (a[k] !== b[k]) return false;
+    return true;
+  }
+  function Placeholder({
+    name,
+    hintSize,
+    streaming,
+    error
+  }) {
+    const [w, hgt] = (hintSize || "100%,60px").split(",");
+    return h(
+      "div",
+      {
+        className: "sc-placeholder" + (streaming ? " sc-streaming" : ""),
+        style: { width: w.trim(), height: hgt && hgt.trim() },
+        title: name
+      },
+      error ? h(
+        "div",
+        { className: "sc-placeholder-error" },
+        (name ? name + ": " : "") + error
+      ) : null
+    );
+  }
+  function hintToMin(hint) {
+    if (!hint) return void 0;
+    const [w, hgt] = hint.split(",");
+    return { minWidth: w.trim(), minHeight: hgt && hgt.trim() };
+  }
+  function createComponentFactory(registry, ensureFetched) {
+    const React = getReact();
+    const AncestorContext = React.createContext([]);
+    class StreamableComponent extends React.Component {
+      constructor(props) {
+        super(props);
+        __publicField(this, "__name");
+        __publicField(this, "__sub");
+        __publicField(this, "__needsDidMount", false);
+        /** Snapshot of the registry's streaming flags taken at render time —
+         *  builders read it off the RenderCtx (this) to pick placeholder vs
+         *  render-nothing for unresolved values. */
+        __publicField(this, "__streamingNow", false);
+        __publicField(this, "__htmlStreamingNow", false);
+        /** When a construct throws, remember the (class, registry.ver, props)
+         *  triple so render-time reconcile doesn't re-attempt it on every parent
+         *  re-render. A registry bump (new class, template, external module
+         *  resolving via bumpAll) changes `ver` and breaks the memo so an
+         *  env-dependent constructor can self-heal. */
+        __publicField(this, "__failedLogic", null);
+        __publicField(this, "__failedUserProps", null);
+        __publicField(this, "__failedVer", -1);
+        /** Per-instance constructor error — kept here (not on the registry entry)
+         *  so one instance's successful construct can't hide a sibling's failure,
+         *  and a construct can never wipe an eval error `updateJs` recorded on
+         *  `r.logicError`. */
+        __publicField(this, "__ctorError", null);
+        __publicField(this, "logic");
+        this.__name = props.__name;
+        this.state = { __v: 0, __err: null };
+        this.__sub = () => {
+          if (this.state.__err) this.setState({ __err: null });
+          this.forceUpdate();
+        };
+        this.__makeLogic(registry.get(this.__name).Logic, null);
+        ensureFetched(this.__name);
+      }
+      /** Error-boundary hook: a render crash anywhere in this DC's subtree
+       *  (its own template, an x-import'd component, a child DC without its
+       *  own deeper boundary) lands here instead of unmounting the page. */
+      static getDerivedStateFromError(e) {
+        return { __err: e instanceof Error && e.message ? e.message : String(e) };
+      }
+      componentDidCatch(e, info) {
+        console.error(
+          "[dc-runtime] render error in <" + this.__name + ">:",
+          e,
+          info?.componentStack || ""
+        );
+      }
+      /** Instantiate the logic class (or the no-op base) and adopt `prevState`
+       *  over its initial state — used both at mount and on hot-swap. */
+      __makeLogic(Logic, prevState) {
+        const L = Logic || StreamableLogic;
+        try {
+          this.logic = new L(this.__userProps());
+          this.__failedLogic = null;
+          this.__failedUserProps = null;
+          this.__ctorError = null;
+        } catch (e) {
+          console.error(e);
+          this.__failedLogic = Logic;
+          this.__failedUserProps = this.__userProps();
+          this.__failedVer = registry.get(this.__name).ver;
+          this.__ctorError = this.__name + ": " + (e instanceof Error && e.message ? e.message : String(e));
+          this.logic = new StreamableLogic(
+            this.__userProps()
+          );
+        }
+        this.logic.__host = this;
+        if (prevState)
+          this.logic.state = { ...this.logic.state || {}, ...prevState };
+      }
+      /** The props the author's logic + template see — internal __-prefixed
+       *  wiring stripped. */
+      __userProps() {
+        const { __name, __hintSize, __tplId, __hostStyle, ...rest } = this.props;
+        return rest;
+      }
+      __setLogicState(update, cb) {
+        const prev = this.logic.state;
+        const patch = typeof update === "function" ? update(prev) : update;
+        this.logic.state = { ...prev, ...patch };
+        this.setState((s) => ({ __v: s.__v + 1 }), cb);
+      }
+      /** Swap the logic instance when the registry's Logic class changed
+       *  (streaming completion, hot reload). State carries over; didMount
+       *  re-fires after the swap commits so refs exist. */
+      __reconcileLogic() {
+        const r = registry.get(this.__name);
+        const Next = r.Logic;
+        const Cur = this.logic.constructor;
+        if (Next === Cur || !Next && Cur === StreamableLogic || Next === this.__failedLogic && r.ver === this.__failedVer && shallowEqual(this.__userProps(), this.__failedUserProps)) {
+          return;
+        }
+        if (!this.__needsDidMount) {
+          try {
+            this.logic.componentWillUnmount();
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        this.__makeLogic(Next, this.logic.state);
+        this.__needsDidMount = true;
+      }
+      componentDidMount() {
+        registry.get(this.__name).subs.add(this.__sub);
+        try {
+          this.logic.componentDidMount();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      componentDidUpdate(prevProps) {
+        this.logic.props = this.__userProps();
+        if (this.__needsDidMount) {
+          if (this.state.__err || !registry.get(this.__name).tpl) return;
+          this.__needsDidMount = false;
+          try {
+            this.logic.componentDidMount();
+          } catch (e) {
+            console.error(e);
+          }
+        } else {
+          try {
+            this.logic.componentDidUpdate(prevProps);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      componentWillUnmount() {
+        registry.get(this.__name).subs.delete(this.__sub);
+        if (!this.__needsDidMount) {
+          try {
+            this.logic.componentWillUnmount();
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      render() {
+        const r = registry.get(this.__name);
+        const cls = "sc-host" + (r.htmlStreaming ? " sc-streaming-html" : "") + (r.jsStreaming ? " sc-streaming-js" : "");
+        const hintStyle = r.htmlStreaming ? hintToMin(this.props.__hintSize) : void 0;
+        const hostStyle = this.props.__hostStyle || hintStyle ? { ...hintStyle || {}, ...this.props.__hostStyle || {} } : void 0;
+        const hostBase = {
+          className: cls,
+          style: hostStyle,
+          "data-sc-name": this.__name,
+          "data-dc-tpl": this.props.__tplId
+        };
+        const chain = Array.isArray(this.context) ? this.context : [];
+        if (chain.includes(this.__name)) {
+          const cycle = [
+            ...chain.slice(chain.indexOf(this.__name)),
+            this.__name
+          ].join(" \u2192 ");
+          return h(
+            "div",
+            { ...hostBase, className: cls + " sc-has-error" },
+            h(Placeholder, {
+              name: this.__name,
+              hintSize: this.props.__hintSize,
+              error: "circular import: " + cycle
+            })
+          );
+        }
+        if (this.state.__err) {
+          return h(
+            "div",
+            { ...hostBase, className: cls + " sc-has-error" },
+            h(
+              "div",
+              { className: "sc-logic-error" },
+              this.__name + ": " + this.state.__err
+            ),
+            h(Placeholder, {
+              name: this.__name,
+              hintSize: this.props.__hintSize,
+              error: this.state.__err
+            })
+          );
+        }
+        this.__reconcileLogic();
+        if (!r.tpl) {
+          return h(
+            "div",
+            hostBase,
+            h(Placeholder, { name: this.__name, hintSize: this.props.__hintSize })
+          );
+        }
+        const userProps = this.__userProps();
+        this.logic.props = userProps;
+        let vals = userProps;
+        let renderErr = r.logicError || this.__ctorError;
+        try {
+          vals = { ...userProps, ...this.logic.renderVals() || {} };
+        } catch (e) {
+          console.error(e);
+          renderErr = this.__name + ".renderVals(): " + (e instanceof Error && e.message ? e.message : String(e));
+        }
+        this.__streamingNow = !!(r.htmlStreaming || r.jsStreaming);
+        this.__htmlStreamingNow = !!r.htmlStreaming;
+        return h(
+          "div",
+          { ...hostBase, className: cls + (renderErr ? " sc-has-error" : "") },
+          renderErr && h("div", { className: "sc-logic-error" }, renderErr),
+          h(
+            AncestorContext.Provider,
+            { value: [...chain, this.__name] },
+            r.tpl(vals, this)
+          )
+        );
+      }
+    }
+    __publicField(StreamableComponent, "contextType", AncestorContext);
+    const named = /* @__PURE__ */ new Map();
+    function getDC(name) {
+      const hit = named.get(name);
+      if (hit) return hit;
+      function Dispatcher(p) {
+        const [, setTick] = React.useState(0);
+        React.useEffect(() => {
+          const sub = () => setTick((n) => n + 1);
+          registry.get(name).subs.add(sub);
+          return () => {
+            registry.get(name).subs.delete(sub);
+          };
+        }, []);
+        ensureFetched(name);
+        return h(StreamableComponent, { ...p, __name: name });
+      }
+      Dispatcher.displayName = name;
+      named.set(name, Dispatcher);
+      return Dispatcher;
+    }
+    return {
+      getDC,
+      StreamableComponent
+    };
+  }
+
+  // src/external.ts
+  var isCustomElementName = (n) => !n.includes(".") && n.includes("-");
+  function isRenderableType(g) {
+    if (typeof g === "function") return !isElementClass(g);
+    return typeof g === "object" && g !== null && typeof g.$$typeof === "symbol";
+  }
+  function resolveDottedPath(root, name) {
+    let cur = root;
+    for (const seg of name.split(".")) {
+      if (cur == null) return void 0;
+      cur = cur[seg];
+    }
+    return cur;
+  }
+  var BABEL_URL = "https://unpkg.com/@babel/standalone@7.26.4/babel.min.js";
+  var GLOBAL_POLL_INTERVAL_MS = 50;
+  var GLOBAL_POLL_TIMEOUT_MS = 3e4;
+  function createExternalModules(onResolved) {
+    const cache = /* @__PURE__ */ new Map();
+    let babelLoading = null;
+    const reportedMissing = /* @__PURE__ */ new Map();
+    const polling = /* @__PURE__ */ new Set();
+    function ensureBabel() {
+      if (window.Babel) return Promise.resolve();
+      if (babelLoading) return babelLoading;
+      babelLoading = new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = BABEL_URL;
+        s.crossOrigin = "anonymous";
+        s.onload = () => res();
+        s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      return babelLoading;
+    }
+    function load(kind, url) {
+      if (cache.has(url)) return;
+      cache.set(url, null);
+      console.info("[dc-runtime] x-import: loading", url, "(" + kind + ")");
+      const ready = kind === "jsx" ? ensureBabel() : Promise.resolve();
+      ready.then(() => fetch(url)).then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      }).then((src) => {
+        const code = kind === "jsx" ? window.Babel.transform(src, {
+          filename: url,
+          presets: ["react", "typescript"]
+        }).code : src;
+        const module = { exports: {} };
+        const before = new Set(Object.keys(window));
+        //! nosemgrep: eval-and-function-constructor
+        new Function("React", "module", "exports", "require", code)(
+          getReact(),
+          module,
+          module.exports,
+          () => ({})
+        );
+        const globals = {};
+        for (const k of Object.keys(window)) {
+          if (!before.has(k) && typeof window[k] === "function") {
+            globals[k] = window[k];
+          }
+        }
+        cache.set(url, { mod: module.exports, globals });
+        console.info(
+          "[dc-runtime] x-import: loaded",
+          url,
+          "\u2014 exports:",
+          Object.keys(module.exports),
+          "window globals:",
+          Object.keys(globals)
+        );
+        onResolved();
+      }).catch((e) => {
+        cache.set(url, {
+          mod: {},
+          globals: {},
+          error: "failed to load: " + (e instanceof Error && e.message ? e.message : String(e))
+        });
+        console.error(
+          "[dc-runtime] x-import: FAILED to load",
+          url,
+          "(" + kind + ")",
+          e
+        );
+        onResolved();
+      });
+    }
+    function resolve2(url, name) {
+      const entry = cache.get(url);
+      if (!entry) return null;
+      const { mod, globals } = entry;
+      const C = mod && mod[name] || globals && globals[name] || typeof window !== "undefined" && window[name] || mod && mod.default;
+      if (typeof C === "function") return C;
+      const key = url + "\0" + name;
+      if (!reportedMissing.has(key)) {
+        reportedMissing.set(
+          key,
+          entry.error || 'no export named "' + name + '" (has: ' + Object.keys(mod).join(", ") + ")"
+        );
+        console.error(
+          "[dc-runtime] x-import: module",
+          url,
+          "loaded but has no component named",
+          JSON.stringify(name),
+          "\u2014 available exports:",
+          Object.keys(mod),
+          "window globals:",
+          Object.keys(globals),
+          ". The module must `module.exports = {" + name + "}` or set `window." + name + "`."
+        );
+      }
+      return null;
+    }
+    function waitForGlobal(name) {
+      if (polling.has(name)) return;
+      polling.add(name);
+      const started = Date.now();
+      const isCE = isCustomElementName(name);
+      const tick = () => {
+        const found = isCE ? customElements.get(name) : isRenderableType(resolveDottedPath(window, name));
+        if (found) {
+          polling.delete(name);
+          onResolved();
+          return;
+        }
+        if (Date.now() - started >= GLOBAL_POLL_TIMEOUT_MS) {
+          console.warn(
+            "[dc-runtime] x-import: global",
+            JSON.stringify(name),
+            "never appeared on window after " + GLOBAL_POLL_TIMEOUT_MS + "ms"
+          );
+          return;
+        }
+        setTimeout(tick, GLOBAL_POLL_INTERVAL_MS);
+      };
+      setTimeout(tick, GLOBAL_POLL_INTERVAL_MS);
+    }
+    function resolveGlobal(url, name) {
+      const isCE = isCustomElementName(name);
+      if (!url) {
+        if (isCE) {
+          if (customElements.get(name)) return name;
+          waitForGlobal(name);
+          return null;
+        }
+        const g2 = resolveDottedPath(window, name);
+        if (isRenderableType(g2)) return g2;
+        waitForGlobal(name);
+        return null;
+      }
+      const entry = cache.get(url);
+      if (!entry) return null;
+      if (isCE && customElements.get(name)) return name;
+      const g = entry.globals[name] ?? resolveDottedPath(window, name);
+      if (isRenderableType(g)) return g;
+      if (name.includes(".")) return null;
+      const key = url + "\0global\0" + name;
+      if (!reportedMissing.has(key)) {
+        reportedMissing.set(key, null);
+        if (isCE && !customElements.get(name)) {
+          console.warn(
+            "[dc-runtime] x-import:",
+            url,
+            "loaded but no custom element",
+            JSON.stringify(name),
+            "is registered and window." + name + " is not a function \u2014 rendering <" + name + "> as an unknown element."
+          );
+        }
+      }
+      return name;
+    }
+    function getError(url, name) {
+      const entry = cache.get(url);
+      if (entry?.error) return entry.error;
+      return reportedMissing.get(url + "\0" + name) || null;
+    }
+    return { load, resolve: resolve2, resolveGlobal, getError };
+  }
+  function isElementClass(g) {
+    try {
+      return typeof g === "function" && typeof HTMLElement !== "undefined" && g.prototype instanceof HTMLElement;
+    } catch {
+      return false;
+    }
+  }
+
+  // src/helmet.ts
+  function createHelmetManager(doc, isStreaming) {
+    const mounted = /* @__PURE__ */ new Set();
+    const live = /* @__PURE__ */ new Map();
+    function compile(node) {
+      const raw = [...node.children];
+      const helmetClosed = node.nextSibling != null || node.parentNode?.nextSibling != null;
+      return (_vals, ctx) => {
+        const name = ctx && ctx.__name || "";
+        const streaming = !!(name && isStreaming(name));
+        for (let i = 0; i < raw.length; i++) {
+          const child = raw[i];
+          const tag = child.tagName;
+          const mayBePartial = streaming && !helmetClosed && i === raw.length - 1;
+          if (tag === "SCRIPT") {
+            if (mayBePartial) continue;
+            const key = "SCRIPT|" + (child.getAttribute("src") || child.textContent || "");
+            if (mounted.has(key)) continue;
+            mounted.add(key);
+            const el = doc.createElement("script");
+            for (const { name: an, value } of [...child.attributes])
+              el.setAttribute(an, value);
+            if (child.textContent) el.textContent = child.textContent;
+            doc.head.appendChild(el);
+          } else if (tag === "LINK" || tag === "META") {
+            if (mayBePartial) continue;
+            const key = tag + "|" + (child.getAttribute("href") || child.getAttribute("src") || child.outerHTML);
+            if (mounted.has(key)) continue;
+            mounted.add(key);
+            doc.head.appendChild(child.cloneNode(true));
+          } else {
+            const key = name + "|" + i;
+            let el = live.get(key);
+            if (!el || el.tagName !== tag) {
+              if (el) el.remove();
+              el = doc.createElement(tag.toLowerCase());
+              live.set(key, el);
+              doc.head.appendChild(el);
+            }
+            for (const { name: an, value } of [...child.attributes]) {
+              if (el.getAttribute(an) !== value) el.setAttribute(an, value);
+            }
+            if (el.textContent !== child.textContent)
+              el.textContent = child.textContent;
+          }
+        }
+        return null;
+      };
+    }
+    return { compile };
+  }
+
+  // src/pseudo.ts
+  function createPseudoSheet(doc) {
+    let el = null;
+    const cache = /* @__PURE__ */ new Map();
+    let n = 0;
+    return (pseudo, css) => {
+      const k = pseudo + "|" + css;
+      const hit = cache.get(k);
+      if (hit) return hit;
+      if (!el) {
+        el = doc.createElement("style");
+        doc.head.appendChild(el);
+      }
+      const cls = "scp" + (n++).toString(36);
+      const sel = pseudo === "before" || pseudo === "after" ? "." + cls + "::" + pseudo : "." + cls + ":" + pseudo;
+      el.sheet.insertRule(sel + "{" + css + "}", el.sheet.cssRules.length);
+      cache.set(k, cls);
+      return cls;
+    };
+  }
+
+  // src/registry.ts
+  function createRegistry() {
+    const entries = /* @__PURE__ */ Object.create(null);
+    function get(name) {
+      return entries[name] || (entries[name] = {
+        html: "",
+        tpl: null,
+        Logic: null,
+        jsStreaming: false,
+        htmlStreaming: false,
+        ver: 0,
+        subs: /* @__PURE__ */ new Set(),
+        fetched: false
+      });
+    }
+    function bump(name) {
+      const r = get(name);
+      r.ver++;
+      for (const fn of r.subs) fn();
+    }
+    return {
+      entries,
+      get,
+      bump,
+      bumpAll() {
+        for (const n in entries) bump(n);
+      }
+    };
+  }
+
+  // src/runtime.ts
+  var COMPONENT_DIR = ".";
+  function createRuntime(doc = document) {
+    const registry = createRegistry();
+    const pseudoClass = createPseudoSheet(doc);
+    const helmet = createHelmetManager(
+      doc,
+      (name) => registry.get(name).htmlStreaming
+    );
+    const external = createExternalModules(() => registry.bumpAll());
+    const factory = createComponentFactory(registry, ensureFetched);
+    const host = {
+      component: (name) => factory.getDC(name),
+      placeholder: (props) => h(Placeholder, props),
+      helmet: (node) => helmet.compile(node),
+      loadExternal: (kind, url) => external.load(kind, url),
+      resolveExternal: (url, name) => external.resolve(url, name),
+      resolveExternalGlobal: (url, name) => external.resolveGlobal(url, name),
+      resolveExternalError: (url, name) => external.getError(url, name),
+      pseudoClass
+    };
+    function ensureFetched(name) {
+      const r = registry.get(name);
+      if (r.fetched) return;
+      r.fetched = true;
+      const url = COMPONENT_DIR + "/" + encodeURIComponent(name) + ".dc.html";
+      fetch(url).then((res) => {
+        if (!res.ok) {
+          console.error(
+            "[dc-runtime] sibling fetch for <" + name + "/> failed:",
+            url,
+            "returned",
+            res.status,
+            "\u2014 the reference renders as an empty placeholder."
+          );
+          return "";
+        }
+        return res.text();
+      }).then((t) => {
+        if (!t) return;
+        const parsed = parseDcText(t);
+        if (!parsed) {
+          console.error(
+            "[dc-runtime] sibling fetch for <" + name + "/>:",
+            url,
+            "has no x-dc block \u2014 not a Design Component."
+          );
+          return;
+        }
+        if (parsed.props) r.propsMeta = parsed.props;
+        if (parsed.preview) r.preview = parsed.preview;
+        if (parsed.template && !r.html) updateHtml(name, parsed.template);
+        if (parsed.js && !r.Logic) updateJs(name, parsed.js);
+      }).catch(
+        (e) => console.error(
+          "[dc-runtime] sibling fetch for <" + name + "/> threw:",
+          url,
+          e
+        )
+      );
+    }
+    function updateHtml(name, html) {
+      const r = registry.get(name);
+      r.html = html;
+      try {
+        r.tpl = compileTemplate(html, host);
+      } catch (e) {
+        console.error("[dc-runtime] template compile FAILED for", name, e);
+      }
+      registry.bump(name);
+    }
+    function updateJs(name, src) {
+      const r = registry.get(name);
+      const seq = r.jsSeq = (r.jsSeq || 0) + 1;
+      try {
+        const Cls = evalDcLogic(src);
+        if (r.jsSeq !== seq) return;
+        if (typeof Cls !== "function") {
+          r.logicError = name + ".dc.html: <script data-dc-script> must define `class Component extends DCLogic`";
+        } else {
+          r.logicError = null;
+          r.Logic = Cls;
+        }
+      } catch (e) {
+        if (r.jsSeq !== seq) return;
+        console.error(
+          "[dc-runtime] logic class eval FAILED for",
+          name,
+          "\u2014 the template renders with props only.",
+          e
+        );
+        r.logicError = name + ": " + (e instanceof Error && e.message ? e.message : String(e));
+      }
+      registry.bump(name);
+    }
+    function setStreaming(name, kind, on) {
+      const r = registry.get(name);
+      if (kind === "html") r.htmlStreaming = !!on;
+      else r.jsStreaming = !!on;
+      let any = false;
+      for (const n in registry.entries) {
+        const e = registry.entries[n];
+        if (e && (e.htmlStreaming || e.jsStreaming)) {
+          any = true;
+          break;
+        }
+      }
+      doc.documentElement.classList.toggle("sc-dc-streaming", any);
+      registry.bump(name);
+    }
+    function dcUpdate(name, kind, content, streaming) {
+      if (streaming) registry.get(name).fetched = true;
+      if (kind === "html") {
+        setStreaming(name, "html", !!streaming);
+        updateHtml(name, content);
+      } else if (kind === "js") {
+        setStreaming(name, "js", !!streaming);
+        if (!streaming) updateJs(name, content);
+      } else if (kind === "props") {
+        const { props, preview } = parseDataProps(content);
+        const r = registry.get(name);
+        r.propsMeta = props ?? void 0;
+        r.preview = preview;
+        registry.bump(name);
+      }
+    }
+    function setProps(name, overrides) {
+      registry.get(name).propOverrides = overrides && typeof overrides === "object" ? { ...overrides } : null;
+      registry.bump(name);
+    }
+    function adoptParsed(name, parsed) {
+      if (!parsed) return;
+      const r = registry.get(name);
+      if (parsed.props) r.propsMeta = parsed.props;
+      if (parsed.preview) r.preview = parsed.preview;
+      if (parsed.template) updateHtml(name, parsed.template);
+      if (parsed.js) updateJs(name, parsed.js);
+    }
+    return {
+      registry,
+      getDC: factory.getDC,
+      updateHtml,
+      updateJs,
+      dcUpdate,
+      setProps,
+      adoptParsed,
+      markFetched: (name) => {
+        registry.get(name).fetched = true;
+      },
+      annotatedTemplate: (name) => {
+        const r = registry.get(name);
+        return r.tpl && r.tpl.__annotated || null;
+      },
+      templateSource: (name) => registry.get(name).html || null,
+      StreamableLogic
+    };
+  }
+
+  // src/index.ts
+  var REACT_URL = "https://unpkg.com/react@18.3.1/umd/react.production.min.js";
+  var REACT_SRI = "sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z";
+  var REACT_DOM_URL = "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js";
+  var REACT_DOM_SRI = "sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1";
+  function hideRawTemplate() {
+    const s = document.createElement("style");
+    s.textContent = "x-dc{display:none!important}";
+    document.head.appendChild(s);
+  }
+  function loadScript(src, integrity) {
+    return new Promise((resolve2, reject) => {
+      //! nosemgrep: create-script-element
+      const s = document.createElement("script");
+      s.src = src;
+      s.integrity = integrity;
+      s.crossOrigin = "anonymous";
+      s.async = false;
+      s.onload = () => resolve2();
+      s.onerror = () => reject(new Error(`failed to load ${src}`));
+      document.head.appendChild(s);
+    });
+  }
+  function loadReactUmd() {
+    const w = window;
+    if (w.React && w.ReactDOM) return Promise.resolve();
+    return Promise.all([
+      loadScript(REACT_URL, REACT_SRI),
+      loadScript(REACT_DOM_URL, REACT_DOM_SRI)
+    ]).then(() => void 0);
+  }
+  function init() {
+    const runtime = createRuntime(document);
+    let rootName = "Root";
+    const baseCss = document.createElement("style");
+    baseCss.textContent = BASE_CSS;
+    document.head.prepend(baseCss);
+    const notifyHost = () => {
+      if (window.parent === window) return;
+      const r = runtime.registry.entries[rootName];
+      try {
+        window.parent.postMessage(
+          {
+            type: "__dc_booted",
+            rootName,
+            propsMeta: r && r.propsMeta || null,
+            preview: r && r.preview || null
+          },
+          "*"
+        );
+      } catch {
+      }
+    };
+    const api = {
+      __dcUpdate: (name, kind, content, streaming) => {
+        runtime.dcUpdate(name, kind, content, streaming);
+        if (name === rootName && !streaming && kind === "props") notifyHost();
+      },
+      __dcSetProps: (name, overrides) => runtime.setProps(name, overrides),
+      /** Name of the component currently mounted as the page root — DC tools
+       *  push their template-stream here when targeting "the open page". */
+      __dcRootName: () => rootName,
+      /** Editor bridge — the encoded, `data-dc-tpl`-annotated template source.
+       *  The host editor parses this into its own template DOM so it can map a
+       *  rendered node (carrying the same `data-dc-tpl`) back to the source
+       *  node that emitted it. Returns the encoded form (`<sc-comp>`,
+       *  `sc-camel-*` attrs); the editor decodes on serialize. */
+      __dcAnnotatedTemplate: (name) => runtime.annotatedTemplate(name),
+      /** Editor bridge — the *original* (decoded) template source. */
+      __dcTemplateSource: (name) => runtime.templateSource(name),
+      __dcBoot: () => {
+        rootName = boot(runtime, document) ?? rootName;
+        notifyHost();
+      },
+      __dcRegistry: runtime.registry.entries,
+      getDC: (name) => runtime.getDC(name),
+      // `DCLogic` is the documented base class name; `StreamableLogic` is the
+      // implementation alias kept for any project that already references it.
+      DCLogic: runtime.StreamableLogic,
+      StreamableLogic: runtime.StreamableLogic
+    };
+    Object.assign(window, api);
+    if (document.readyState !== "loading") api.__dcBoot();
+    else document.addEventListener("DOMContentLoaded", () => api.__dcBoot());
+  }
+  hideRawTemplate();
+  loadReactUmd().then(init).catch((err) => {
+    console.error("[dc] failed to load React or boot:", err);
+    throw err;
+  });
+})();
+
+</script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..800&family=Montserrat:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  .spb-subject-input::placeholder {
+    color: #b8c0cc !important;
+    opacity: 1;
+  }
+  html { overflow-y: scroll; scrollbar-gutter: stable; }
+  body { margin: 0; font-family: 'Noto Sans KR', sans-serif; background: #f4f5f7; color: #111827; -webkit-font-smoothing: antialiased; }
+  ::selection { background: #dcecf8; }
+  @keyframes spbToast { 0% { opacity: 0; transform: translate(-50%, 12px); } 12% { opacity: 1; transform: translate(-50%, 0); } 88% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, 12px); } }
+  .spb-scroll::-webkit-scrollbar { width: 10px; }
+  .spb-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+  .page-shell, .main-panel, .main-panel > div, .spb-tab-wrap, .spb-flow-wrap, .spb-tip-thumb {
+    overflow: visible !important;
+  }
+  .main-panel {
+    position: relative;
+    z-index: 1000;
+  }
+  .prompt-cart {
+    z-index: 20;
+  }
+  .spb-tip {
+    position: relative;
+    z-index: 1;
+  }
+  .spb-tip:hover,
+  .spb-tip:focus-visible {
+    z-index: 2147483647 !important;
+  }
+  .spb-tip[data-tooltip]:not([data-tooltip=""])::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    z-index: 2147483647 !important;
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(17, 24, 39, 0.94);
+    color: #ffffff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.18);
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+    text-align: center;
+    white-space: normal;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 4px);
+    transition: opacity .08s ease, transform .08s ease;
+    transition-delay: .08s;
+  }
+  .spb-tip[data-tooltip]:not([data-tooltip=""])::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 3px);
+    z-index: 2147483647 !important;
+    border: 5px solid transparent;
+    border-top-color: rgba(17, 24, 39, 0.94);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 4px);
+    transition: opacity .08s ease, transform .08s ease;
+    transition-delay: .08s;
+  }
+  .spb-tip:hover { z-index: 2147483647 !important; }
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::after,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::before,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::after,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::before {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .spb-tip-thumb::after { bottom: calc(100% + 10px); }
+  .spb-tip-thumb::before { bottom: calc(100% + 5px); }
+
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::after,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::after {
+    z-index: 2147483647 !important;
+  }
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::before,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::before {
+    z-index: 2147483647 !important;
+  }
+
+
+  .spb-tab-wrap,
+  .spb-flow-step,
+  .spb-tip-thumb {
+    position: relative;
+    overflow: visible !important;
+  }
+  .spb-tab-wrap:hover,
+  .spb-tab-wrap:focus-within,
+  .spb-flow-step:hover,
+  .spb-flow-step:focus-within,
+  .spb-tip-thumb:hover,
+  .spb-tip-thumb:focus-within {
+    z-index: 2147483600 !important;
+  }
+  .spb-tab-wrap:hover .spb-tip,
+  .spb-tab-wrap:focus-within .spb-tip,
+  .spb-flow-step:hover .spb-tip,
+  .spb-flow-step:focus-within .spb-tip,
+  .spb-tip-thumb:hover,
+  .spb-tip-thumb:focus-within {
+    z-index: 2147483640 !important;
+  }
+
+
+  .spb-tip,
+  .spb-tab-wrap,
+  .spb-flow-step,
+  .spb-tip-thumb {
+    position: relative;
+    overflow: visible !important;
+  }
+  .spb-tip:hover,
+  .spb-tip:focus-visible,
+  .spb-tab-wrap:hover,
+  .spb-tab-wrap:focus-within,
+  .spb-flow-step:hover,
+  .spb-flow-step:focus-within,
+  .spb-tip-thumb:hover,
+  .spb-tip-thumb:focus-within {
+    z-index: 2147483646 !important;
+  }
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::after,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):hover::before,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::after,
+  .spb-tip[data-tooltip]:not([data-tooltip=""]):focus-visible::before {
+    z-index: 2147483647 !important;
+  }
+
+
+  /* Tooltip portal: hide local pseudo-tooltips so they don't get clipped by menus/cards. */
+  .spb-tip[data-tooltip]::after,
+  .spb-tip[data-tooltip]::before,
+  .spb-tip-thumb::after,
+  .spb-tip-thumb::before {
+    display: none !important;
+    content: none !important;
+  }
+
+  .spb-tip-thumb { width: 100%; max-width: 160px; margin-inline: auto; }
+
+  .spb-tip-thumb::after {
+    left: 0 !important;
+    right: auto !important;
+    transform: translate(0, 4px) !important;
+    text-align: left;
+    max-width: 260px;
+  }
+  .spb-tip-thumb::before {
+    left: 28px !important;
+    transform: translate(0, 4px) !important;
+  }
+  .spb-tip-thumb:hover::after,
+  .spb-tip-thumb:focus-visible::after {
+    transform: translate(0, 0) !important;
+  }
+  .spb-tip-thumb:hover::before,
+  .spb-tip-thumb:focus-visible::before {
+    transform: translate(0, 0) !important;
+  }
+
+  .spb-tip-thumb > div { max-width: 100%; }
+  .spb-tip-thumb img { max-width: 100%; }
+  @media (max-width: 760px) {
+    .spb-tab-wrap > button { padding: 8px 12px !important; gap: 6px !important; font-size: 13px !important; }
+    .spb-tab-wrap > button .spb-tip { font-size: 18px !important; }
+    .spb-tip-thumb { max-width: clamp(72px, 20vw, 140px); }
+  }
+  @media (max-width: 480px) {
+    .spb-tab-wrap > button { padding: 7px 10px !important; gap: 5px !important; font-size: 12.5px !important; }
+    .spb-tab-wrap > button .spb-tip { font-size: 17px !important; }
+    .spb-tip-thumb { max-width: clamp(56px, 18vw, 112px); }
+  }
+
+  .spb-flow-wrap {
+    display:inline-flex;
+    flex-wrap:nowrap;
+    align-items:center;
+    max-width:100%;
+    margin-bottom:12px;
+    padding:4px;
+    border:1px solid #d1d5db;
+    border-radius:999px;
+    background:#ffffff;
+    box-shadow:0 1px 2px rgba(17,24,39,0.04);
+    overflow:visible;
+  }
+  .spb-flow-wrap > * {
+    position:relative;
+    z-index:2;
+  }
+  .spb-flow-wrap.is-tail-arrow {
+    position:relative;
+    padding:4px 7px 4px 4px;
+    border:none;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
+    clip-path:none;
+  }
+  .spb-flow-wrap.is-tail-arrow::before {
+    content:"";
+    position:absolute;
+    inset:0;
+    background:#d1d5db;
+    clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 50%, calc(100% - 24px) 100%, 0 100%);
+    border-radius:999px 0 0 999px;
+    z-index:0;
+  }
+  .spb-flow-wrap.is-tail-arrow::after {
+    content:"";
+    position:absolute;
+    inset:1px;
+    background:#ffffff;
+    clip-path: polygon(0 0, calc(100% - 23px) 0, calc(100% - 1px) 50%, calc(100% - 23px) 100%, 0 100%);
+    border-radius:999px 0 0 999px;
+    z-index:1;
+  }
+  .spb-flow-wrap {
+    position: relative;
+    z-index: 5;
+  }
+  .spb-flow-step {
+    position: relative;
+    z-index: 2;
+  }
+  .spb-flow-step:hover,
+  .spb-flow-step:focus-visible,
+  .spb-flow-step.is-active:hover,
+  .spb-flow-step.is-active:focus-visible {
+    z-index: 2147483640 !important;
+  }
+  .spb-flow-step .spb-tip {
+    position: relative;
+    z-index: 2147483641;
+  }
+  .spb-flow-step {
+    position:relative;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    min-height:34px;
+    width:var(--tab-fixed-width, auto);
+    flex:0 0 var(--tab-fixed-width, auto);
+    padding:7px 18px;
+    border:0;
+    color:#374151;
+    background:transparent;
+    font-family:'Noto Sans KR',sans-serif;
+    font-size:14px;
+    font-weight:700;
+    line-height:1;
+    cursor:pointer;
+    white-space:nowrap;
+    transition:color .12s ease, font-weight .12s ease;
+  }
+  .spb-flow-step:not(.is-active):not(.is-last)::after {
+    content:"";
+    position:absolute;
+    right:0;
+    top:50%;
+    width:1px;
+    height:18px;
+    background:#d1d5db;
+    transform:translateY(-50%);
+  }
+  .spb-flow-step:not(.is-active):hover {
+    color:#2054dc;
+    font-weight:900;
+  }
+  .spb-flow-step.is-active {
+    padding:7px 22px;
+    color:#ffffff;
+    background:#2054dc;
+    font-weight:900;
+    clip-path: polygon(0 0, calc(100% - 19px) 0, 100% 50%, calc(100% - 19px) 100%, 0 100%);
+    z-index:4;
+  }
+  .spb-flow-step.is-active.is-first {
+    border-radius:999px 0 0 999px;
+  }
+  .spb-flow-step.is-active.is-last {
+    margin-right:0;
+    padding-right:22px;
+  }
+  .spb-flow-count {
+    min-width:17px;
+    height:17px;
+    padding:0 5px;
+    border-radius:999px;
+    font-size:10px;
+    font-weight:900;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    background:#e8eefc;
+    color:#2054dc;
+  }
+  .spb-flow-step.is-active .spb-flow-count {
+    background:rgba(255,255,255,0.22);
+    color:#ffffff;
+  }
+  .spb-usage-grid {
+    display:flex;
+    flex-direction:column;
+    gap:0;
+    margin-top:0;
+    width:100%;
+    background:#ffffff;
+    border:1px solid #e5e7eb;
+    border-radius:18px;
+    box-shadow:0 1px 2px rgba(17,24,39,0.04);
+    overflow:hidden;
+  }
+  .spb-usage-card {
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    width:100%;
+    background:transparent;
+    border:0;
+    border-bottom:1px solid rgba(17,24,39,0.08);
+    border-radius:0;
+    padding:14px 18px;
+    box-shadow:none;
+  }
+  .spb-usage-card:last-child {
+    border-bottom:none;
+  }
+  .spb-usage-num {
+    width:28px;
+    height:28px;
+    flex:0 0 28px;
+    border-radius:999px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#eef4ff;
+    color:#2054dc;
+    font-family:'Satoshi',sans-serif;
+    font-size:14px;
+    font-weight:900;
+    margin-top:2px;
+  }
+  .spb-usage-title {
+    font-family:'Plus Jakarta Sans','Noto Sans KR',sans-serif;
+    font-size:14.5px;
+    font-weight:400;
+    letter-spacing:-0.015em;
+    color:#111827;
+    margin-bottom:2px;
+    line-height:1.35;
+  }
+  .spb-usage-text {
+    font-size:13.5px;
+    line-height:1.55;
+    color:#4b5563;
+    font-weight:400;
+  }
+  .spb-usage-emphasis { font-weight:850; color:#111827; }
+  .spb-usage-example { display:block; margin-top:2px; color:#4b5563; font-weight:400; }
+  .spb-usage-sample-wrap { margin-top:10px; }
+  .spb-usage-sample-img {
+    width:150px;
+    flex:0 0 150px;
+    max-width:100%;
+    height:auto;
+    border-radius:12px;
+    display:block;
+    border:1px solid rgba(31,59,122,0.14);
+    box-shadow:none;
+  }
+  .spb-usage-code {
+    margin-top:6px;
+    padding:12px;
+    border-radius:12px;
+    background:#f3f4f6;
+    color:#111827;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size:12.5px;
+    line-height:1.6;
+    word-break:break-word;
+  }
+  .spb-usage-result {
+    margin-top:6px;
+    padding:8px 10px;
+    border-radius:12px;
+    background:#f3f8ff;
+    color:#1f3b7a;
+    font-size:13.5px;
+    line-height:1.65;
+    font-weight:500;
+    display:flex;
+    align-items:center;
+    gap:14px;
+  }
+  .spb-usage-result-text {
+    flex:1 1 auto;
+    min-width:0;
+  }
+  .spb-usage-body {
+    flex:1 1 auto;
+    min-width:0;
+  }
+  @media (max-width:760px) {
+    .spb-flow-wrap { width:100%; overflow-x:auto; justify-content:flex-start; }
+    .spb-flow-step { min-height:32px; padding:6px 14px; font-size:13px; }
+    .spb-flow-step.is-active { padding:6px 26px 6px 17px; }
+    .spb-usage-card { flex-direction:column; gap:10px; padding:12px 14px; }
+    .spb-usage-result { flex-direction:column; align-items:flex-start; }
+    .spb-usage-num { margin-top:0; }
+
+    /* Mobile only: icon thumbnail menus become icon | text rows */
+    .spb-mobile-thumb-grid {
+      display:grid !important;
+      grid-template-columns:1fr !important;
+      column-gap:0 !important;
+      row-gap:10px !important;
+      align-items:stretch !important;
+      justify-content:stretch !important;
+    }
+    .spb-mobile-thumb-grid [style*="grid-column: 1 / -1"] {
+      margin-top:14px !important;
+      padding:10px 2px 6px !important;
+    }
+    .spb-mobile-thumb-option {
+      display:flex !important;
+      flex-direction:row !important;
+      align-items:center !important;
+      justify-content:flex-start !important;
+      gap:14px !important;
+      width:100% !important;
+      min-height:76px !important;
+      padding:10px 14px !important;
+      border:1px solid #e5e7eb !important;
+      border-radius:20px !important;
+      background:#ffffff !important;
+      box-shadow:0 1px 2px rgba(17,24,39,0.04) !important;
+      text-align:left !important;
+      transform:none !important;
+    }
+    .spb-mobile-thumb-option:hover {
+      transform:none !important;
+      box-shadow:0 3px 10px rgba(17,24,39,0.06) !important;
+    }
+    .spb-mobile-thumb-option .spb-tip-thumb {
+      flex:0 0 56px !important;
+      width:56px !important;
+      max-width:56px !important;
+      min-width:56px !important;
+      margin:0 !important;
+    }
+    .spb-mobile-thumb-option .spb-tip-thumb > div {
+      width:56px !important;
+      max-width:56px !important;
+      min-width:56px !important;
+      height:56px !important;
+      aspect-ratio:1 / 1 !important;
+      margin:0 !important;
+    }
+    .spb-mobile-thumb-option .spb-tip-thumb img {
+      width:56px !important;
+      height:56px !important;
+      object-fit:contain !important;
+    }
+    .spb-mobile-thumb-label {
+      flex:1 1 auto !important;
+      min-width:0 !important;
+      margin-top:0 !important;
+      text-align:left !important;
+      font-size:16px !important;
+      line-height:1.35 !important;
+      letter-spacing:-0.035em !important;
+      word-break:keep-all !important;
+    }
+  }
+
+  .spb-tab-wrap { position: relative; display: inline-flex; }
+  .spb-camera-submenu {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 8px);
+    z-index: 80;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 9px;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.98);
+    box-shadow: 0 10px 24px rgba(17,24,39,0.14);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -4px);
+    transition: opacity .09s ease, transform .09s ease;
+    white-space: nowrap;
+  }
+  /* invisible bridge across the gap so hover doesn't drop while moving to the submenu */
+  .spb-camera-submenu::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: 12px;
+  }
+  .spb-camera-tab:hover .spb-camera-submenu,
+  .spb-camera-tab:focus-within .spb-camera-submenu {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+  }
+
+
+  @media (max-width:760px) {
+    /* Mobile only: simplify submenus so the desktop arrow shell does not break or leave empty space */
+    .spb-flow-wrap,
+    .spb-flow-wrap.is-tail-arrow {
+      display:flex !important;
+      flex-wrap:wrap !important;
+      align-items:center !important;
+      justify-content:flex-start !important;
+      width:auto !important;
+      max-width:100% !important;
+      min-width:0 !important;
+      margin:0 0 12px !important;
+      padding:0 !important;
+      border:none !important;
+      border-radius:0 !important;
+      background:transparent !important;
+      box-shadow:none !important;
+      overflow:visible !important;
+      gap:0 !important;
+      clip-path:none !important;
+    }
+    .spb-flow-wrap.is-tail-arrow::before,
+    .spb-flow-wrap.is-tail-arrow::after {
+      display:none !important;
+      content:none !important;
+    }
+    .spb-flow-step,
+    .spb-flow-step.is-active,
+    .spb-flow-step.is-active.is-first,
+    .spb-flow-step.is-active.is-last {
+      position:relative !important;
+      display:inline-flex !important;
+      align-items:center !important;
+      justify-content:flex-start !important;
+      width:auto !important;
+      flex:0 0 auto !important;
+      min-height:0 !important;
+      margin:0 !important;
+      padding:4px 8px !important;
+      border:0 !important;
+      border-radius:0 !important;
+      background:transparent !important;
+      box-shadow:none !important;
+      clip-path:none !important;
+      color:#374151 !important;
+      font-size:14px !important;
+      line-height:1.25 !important;
+      font-weight:700 !important;
+      white-space:nowrap !important;
+    }
+    .spb-flow-step.is-active,
+    .spb-flow-step.has-count {
+      color:#2054dc !important;
+      font-weight:900 !important;
+    }
+    .spb-flow-step:not(.is-last)::after,
+    .spb-flow-step:not(.is-active):not(.is-last)::after,
+    .spb-flow-step.is-active:not(.is-last)::after {
+      content:">" !important;
+      position:static !important;
+      display:inline-flex !important;
+      width:auto !important;
+      height:auto !important;
+      margin:0 0 0 14px !important;
+      padding:0 !important;
+      background:transparent !important;
+      color:#aab2bf !important;
+      font-size:13px !important;
+      font-weight:800 !important;
+      line-height:1 !important;
+      transform:none !important;
+    }
+    .spb-flow-step.is-last::after {
+      display:none !important;
+      content:none !important;
+    }
+    .spb-flow-count,
+    .spb-flow-step.is-active .spb-flow-count {
+      min-width:16px !important;
+      height:16px !important;
+      padding:0 5px !important;
+      margin-left:2px !important;
+      background:#e8eefc !important;
+      color:#2054dc !important;
+      font-size:10px !important;
+      line-height:1 !important;
+    }
+  }
+
+  .app-header { width: 100%; background: #fff; border-bottom: 1px solid #e5e7eb; }
+  .header-inner { width: calc(100% - 64px); max-width: 1440px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .brand-logo { height: 1.5rem; width: auto; display: block; object-fit: contain; }
+  .roe-switch {
+    display:inline-flex;
+    align-items:center;
+    gap:10px;
+    padding:9px 14px;
+    border-radius:999px;
+    background:rgba(255,255,255,0.92);
+    border:1px solid rgba(229,231,235,0.9);
+    box-shadow:none;
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    font-family:'Inter',sans-serif;
+    letter-spacing:0.025em;
+    text-transform:uppercase;
+    white-space:nowrap;
+  }
+  .roe-switch a {
+    font-size:10.5px;
+    line-height:1;
+    text-decoration:none;
+    color:#9ca3af;
+    font-weight:700;
+  }
+  .roe-switch a:hover {
+    color:#2054dc;
+  }
+  .roe-switch .roe-divider {
+    width:1px;
+    height:13px;
+    background:rgba(17,24,39,0.12);
+  }
+  .page-shell { width: calc(100% - 64px); max-width: 1440px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 40px; align-items: start; padding: 30px 0 64px; flex: 1 0 auto; }
+  .main-panel { min-width: 0; }
+  .prompt-cart { width: 380px; position: sticky; top: 96px; align-self: start; background: #ffffff; border-radius: 20px; border: 1px solid #e5e7eb; box-shadow: 0 4px 24px rgba(17,24,39,0.06); overflow: hidden; }
+  .app-footer { width: calc(100% - 64px); max-width: 1440px; margin: auto auto 0; padding: 0 0 34px; text-align:center; font-family:'Inter',sans-serif; font-size:11px; line-height:1; letter-spacing:0.02em; color:#9ca3af; flex-shrink:0; }
+  @media (max-width: 1180px) {
+    .header-inner, .page-shell { width: calc(100% - 32px); }
+    .page-shell { grid-template-columns: 1fr; }
+    .prompt-cart { width: 100%; position: static; }
+    .app-footer { width: calc(100% - 32px); }
+  }
+  @media (max-width: 760px) {
+    .header-inner { height:auto; min-height:68px; gap:12px; padding:12px 0; }
+    .roe-switch { padding:10px 14px; gap:12px; letter-spacing:0.12em; }
+    .roe-switch a { font-size:10px; }
+  }
+
+  /* Desktop submenu: SVG chevron flow based on uploaded chevron-flow method */
+  .spb-submenu-svg-desktop {
+    position: relative;
+    display: inline-block;
+    margin: 2px 0 14px;
+    line-height: 0;
+    max-width: 100%;
+  }
+  .spb-submenu-svg-desktop svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .spb-submenu-svg-label-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .spb-submenu-svg-button {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    color: #64748b;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .spb-submenu-svg-button.is-active {
+    color: #ffffff;
+    font-weight: 800;
+  }
+  .spb-submenu-svg-count {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 1;
+    background: #e8eefc;
+    color: #2054dc;
+  }
+  .spb-submenu-svg-button.is-active .spb-submenu-svg-count {
+    background: rgba(255,255,255,0.26);
+    color: #ffffff;
+  }
+  .spb-submenu-mobile-text {
+    display: none !important;
+  }
+  @media (max-width: 760px) {
+    .spb-submenu-svg-desktop {
+      display: none !important;
+    }
+    .spb-submenu-mobile-text {
+      display: flex !important;
+    }
+  }
+  @media (min-width: 761px) {
+    .spb-submenu-mobile-text {
+      display: none !important;
+    }
+  }
+
+</style>
+</helmet>
+
+<div data-screen-label="Shot Prompt Builder" style="min-height: 100vh; background: #f4f5f7; display:flex; flex-direction:column; box-sizing:border-box;">
+
+  <header class="app-header">
+    <div class="header-inner">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+        <img src="assets/img_001_52390ea845ed.png" alt="ONROE" class="brand-logo" style="width: 24px; height: 24px; object-fit: contain; display: block; flex:0 0 auto;" />
+        <div style="display: flex; align-items: center; gap: 8px; min-width:0;">
+          <span style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: #09090B; white-space:nowrap;">PROMPT ROE</span>
+          <div style="width: 1px; height: 1rem; background: rgba(0,0,0,0.1); flex:0 0 auto;"></div>
+          <span style="font-family: 'Inter', sans-serif; font-weight: 200; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #9ca3af; white-space:nowrap;">BY ONROE</span>
+        </div>
+      </div>
+      <nav class="roe-switch" aria-label="ROE navigation">
+        <a href="https://onroe.space/" target="_blank" rel="noopener noreferrer">ONROE</a>
+        <span class="roe-divider" aria-hidden="true"></span>
+        <a href="https://scraproe.vercel.app/" target="_blank" rel="noopener noreferrer">SCRAP ROE</a>
+        <span class="roe-divider" aria-hidden="true"></span>
+        <a href="https://flowroe.vercel.app/" target="_blank" rel="noopener noreferrer">FLOW ROE</a>
+        <span class="roe-divider" aria-hidden="true"></span>
+        <a href="https://www.threads.com/@onroee" target="_blank" rel="noopener noreferrer">THREAD</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="page-shell">
+
+    <!-- MAIN -->
+    <main class="main-panel">
+      <div>
+        <div style="font-family: 'Satoshi', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.16em; color: #2054dc; margin-bottom: 6px;">{{ active.eyebrow }}</div>
+        <h1 style="font-family: 'Plus Jakarta Sans', 'Noto Sans KR', sans-serif; font-weight: 800; font-size: 30px; line-height: 1.32; min-height: 40px; letter-spacing: -0.02em; margin: 0 0 8px; color: #111827; display:flex; align-items:center;">{{ active.title }}</h1>
+        <p style="{{ active.descStyle }}">{{ active.desc }}</p>
+
+        <!-- TABS -->
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
+          <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="5">
+            <div class="spb-tab-wrap" style="position:relative; display:inline-flex;">
+              <button onClick="{{ tab.onSelect }}" style="{{ tab.style }}">
+                <span class="spb-tip" data-tooltip="{{ tab.tooltip }}" style="font-family: 'Material Symbols Outlined'; font-size: 20px; display: inline-flex; align-items: center; justify-content: center;">{{ tab.icon }}</span>
+                <span>{{ tab.label }}</span>
+                <sc-if value="{{ tab.hasCount }}" hint-placeholder-val="{{ false }}">
+                  <span style="{{ tab.countStyle }}">{{ tab.count }}</span>
+                </sc-if>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ hasSubTabs }}" hint-placeholder-val="{{ false }}">
+          <div class="spb-submenu-svg-desktop">
+            <svg class="spb-chevron-flow-svg" viewBox="{{ subFlow.viewBox }}" width="{{ subFlow.totalW }}" height="{{ subFlow.H }}" xmlns="http://www.w3.org/2000/svg" aria-label="서브 메뉴">
+              <path d="{{ subFlow.silhouette }}" fill="{{ subFlow.inactiveFill }}"></path>
+              <path d="{{ subFlow.activePath }}" fill="{{ subFlow.activeFill }}"></path>
+              <path d="{{ subFlow.silhouette }}" fill="none" stroke="{{ subFlow.outline }}" stroke-width="{{ subFlow.stroke }}" stroke-linejoin="round"></path>
+              <sc-for list="{{ subFlow.dividers }}" as="divider" hint-placeholder-count="4">
+                <path d="{{ divider.d }}" fill="none" stroke="{{ subFlow.outline }}" stroke-width="{{ subFlow.stroke }}" stroke-linejoin="round"></path>
+              </sc-for>
+              <path d="{{ subFlow.activePath }}" fill="none" stroke="{{ subFlow.activeOutline }}" stroke-width="{{ subFlow.stroke }}" stroke-linejoin="round"></path>
+            </svg>
+            <div class="spb-submenu-svg-label-layer" style="{{ subFlow.labelLayerStyle }}">
+              <sc-for list="{{ subFlow.labels }}" as="lbl" hint-placeholder-count="4">
+                <button class="{{ lbl.btnClass }}" style="{{ lbl.btnStyle }}" onClick="{{ lbl.onSelect }}">
+                  <span>{{ lbl.label }}</span>
+                  <sc-if value="{{ lbl.hasCount }}" hint-placeholder-val="{{ false }}">
+                    <span class="spb-submenu-svg-count">{{ lbl.count }}</span>
+                  </sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div class="{{ flowWrapClass }} spb-submenu-mobile-text">
+            <sc-for list="{{ subTabs }}" as="tab" hint-placeholder-count="4">
+              <button class="{{ tab.flowClass }}" style="{{ tab.inlineStyle }}" onClick="{{ tab.onSelect }}">
+                {{ tab.label }}
+                <sc-if value="{{ tab.hasCount }}" hint-placeholder-val="{{ false }}">
+                  <span class="spb-flow-count">{{ tab.count }}</span>
+                </sc-if>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ showUsageGuide }}" hint-placeholder-val="{{ false }}">
+          <div class="spb-usage-grid">
+            <sc-for list="{{ usageSteps }}" as="step" hint-placeholder-count="5">
+              <div class="spb-usage-card">
+                <div class="spb-usage-num">{{ step.num }}</div>
+                <div class="spb-usage-body">
+                  <div class="spb-usage-title">{{ step.title }}</div>
+                  <div class="spb-usage-text">
+                    {{ step.textBefore }}<sc-if value="{{ step.hasEmphasis }}" hint-placeholder-val="{{ false }}"><span class="spb-usage-emphasis">{{ step.emphasis }}</span></sc-if>{{ step.textMiddle }}<sc-if value="{{ step.hasEmphasis2 }}" hint-placeholder-val="{{ false }}"><span class="spb-usage-emphasis">{{ step.emphasis2 }}</span></sc-if>{{ step.textAfter }}
+                    <sc-if value="{{ step.hasExample }}" hint-placeholder-val="{{ false }}">
+                      <span class="spb-usage-example">{{ step.example }}</span>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{ step.hasCode }}" hint-placeholder-val="{{ false }}">
+                    <div class="spb-usage-code">{{ step.code }}</div>
+                  </sc-if>
+                  <sc-if value="{{ step.hasResult }}" hint-placeholder-val="{{ false }}">
+                    <div class="spb-usage-result">
+                      <sc-if value="{{ step.hasSampleImg }}" hint-placeholder-val="{{ false }}">
+                        <img src="{{ step.sampleImg }}" alt="sample" class="spb-usage-sample-img" />
+                      </sc-if>
+                      <span class="spb-usage-result-text">{{ step.result }}</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ showFramePreview }}" hint-placeholder-val="{{ false }}">
+          <div style="margin: 4px 0 28px;">
+            <div style="{{ framePreviewStageStyle }}">
+              <img src="{{ frameBaseSrc }}" alt="frame preview" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center center;" />
+              <sc-for list="{{ frameHighlightItems }}" as="item" hint-placeholder-count="8">
+                <div style="{{ item.overlayStyle }}"></div>
+              </sc-for>
+              <sc-for list="{{ frameHotspots }}" as="spot" hint-placeholder-count="32">
+                <button onClick="{{ spot.onToggle }}" onMouseEnter="{{ spot.onEnter }}" onMouseLeave="{{ spot.onLeave }}" style="{{ spot.style }}"></button>
+              </sc-for>
+              <sc-for list="{{ frameNumberItems }}" as="item" hint-placeholder-count="8">
+                <button onClick="{{ item.onToggle }}" onMouseEnter="{{ item.onEnter }}" onMouseLeave="{{ item.onLeave }}" style="{{ item.hitStyle }}">
+                  <span style="{{ item.badgeStyle }}">{{ item.number }}</span>
+                </button>
+              </sc-for>
+              <sc-if value="{{ hasFrameInfo }}" hint-placeholder-val="{{ true }}">
+                <div style="{{ frameInfoCardStyle }}">
+                  <div style="font-family: 'Plus Jakarta Sans','Noto Sans KR',sans-serif; font-size: 15px; font-weight: 800; color: #ffffff; line-height: 1.25; padding-right: 46px;">{{ frameInfoTitle }}</div>
+                  <div style="margin-top: 3px; font-family: ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.08em; color: rgba(255,255,255,0.75); text-transform: lowercase;">{{ frameInfoEn }}</div>
+                  <div style="margin-top: 7px; font-size: 12.5px; line-height: 1.42; color: rgba(255,255,255,0.92);">{{ frameInfoDesc }}</div>
+                  <div style="position: absolute; top: 10px; right: 12px; width: 34px; height: 34px; border-radius: 999px; background: rgba(255,255,255,0.22); color: #ffffff; display: flex; align-items: center; justify-content: center; font-family: 'Satoshi',sans-serif; font-size: 19px; font-weight: 900;">{{ frameInfoNumber }}</div>
+                  <div style="{{ frameInfoTailStyle }}"></div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- OPTION GRID -->
+        <div class="{{ optionGridClass }}" style="{{ gridStyle }}">
+          <sc-for list="{{ options }}" as="opt" hint-placeholder-count="6">
+            <sc-if value="{{ opt.isSection }}" hint-placeholder-val="{{ false }}">
+              <div style="{{ opt.sectionStyle }}">{{ opt.sectionLabel }}</div>
+            </sc-if>
+            <sc-if value="{{ opt.isOption }}" hint-placeholder-val="{{ true }}">
+              <button class="{{ opt.cardClass }}" onClick="{{ opt.onToggle }}" onMouseEnter="{{ opt.onEnter }}" onMouseLeave="{{ opt.onLeave }}" style="{{ opt.cardStyle }}" style-hover="border-color: #2054dc; box-shadow: 0 8px 20px rgba(17,24,39,0.08); transform: translateY(-2px);">
+                <sc-if value="{{ opt.isPresetList }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex; align-items:center; gap:18px; width:100%; min-width:0;">
+                    <span class="spb-tip" data-tooltip="{{ opt.tooltip }}" style="font-family: 'Material Symbols Outlined'; font-size: 34px; color: {{ opt.iconColor }}; display: inline-flex; align-items: center; justify-content: center; flex:0 0 auto;">{{ opt.icon }}</span>
+                    <div style="flex:1; min-width:0;">
+                      <div style="{{ opt.koStyle }}">
+                        <sc-if value="{{ opt.hasPresetEmphasis }}" hint-placeholder-val="{{ false }}">
+                          <span>{{ opt.presetBefore }}</span><strong style="font-weight:800; color:#111827;">{{ opt.presetEmphasis }}</strong><span>{{ opt.presetAfter }}</span>
+                        </sc-if>
+                        <sc-if value="{{ opt.hasPlainKo }}" hint-placeholder-val="{{ false }}">{{ opt.ko }}</sc-if>
+                      </div>
+                    </div>
+                    <span style="{{ opt.checkStyle }}">
+                      <span style="font-family: 'Material Symbols Outlined'; font-size: 16px; color: #ffffff;">check</span>
+                    </span>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ opt.isRegularOption }}" hint-placeholder-val="{{ true }}">
+                  <sc-if value="{{ opt.showThumb }}" hint-placeholder-val="{{ false }}">
+                    <div class="spb-tip spb-tip-thumb" data-tooltip="{{ opt.tooltip }}" style="display: flex; position: relative; width: 100%; max-width: 160px; margin: 0 auto;">
+                      <div style="{{ opt.thumbWrapStyle }}">
+                        <img src="{{ opt.thumbSrc }}" alt="{{ opt.ko }}" style="{{ opt.thumbImgStyle }}" />
+                        <div style="{{ opt.thumbOverlayStyle }}"></div>
+                      </div>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ opt.showIcon }}" hint-placeholder-val="{{ true }}">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;">
+                      <span class="spb-tip" data-tooltip="{{ opt.tooltip }}" style="font-family: 'Material Symbols Outlined'; font-size: 26px; color: {{ opt.iconColor }}; display: inline-flex; align-items: center; justify-content: center;">{{ opt.icon }}</span>
+                      <span style="{{ opt.checkStyle }}">
+                        <span style="font-family: 'Material Symbols Outlined'; font-size: 16px; color: #ffffff;">check</span>
+                      </span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ opt.compact }}" hint-placeholder-val="{{ false }}">
+                    <span style="{{ opt.checkStyle }}">
+                      <span style="font-family: 'Material Symbols Outlined'; font-size: 14px; color: #ffffff;">check</span>
+                    </span>
+                  </sc-if>
+                  <div class="{{ opt.koClass }}" style="{{ opt.koStyle }}">{{ opt.ko }}</div>
+                  <sc-if value="{{ showEnglish }}" hint-placeholder-val="{{ false }}">
+                    <div style="{{ opt.enStyle }}">{{ opt.en }}</div>
+                  </sc-if>
+                  <div style="{{ opt.descStyle }}">{{ opt.desc }}</div>
+                </sc-if>
+              </button>
+            </sc-if>
+          </sc-for>
+        </div>
+      </div>
+    </main>
+
+    <!-- CART -->
+    <aside class="prompt-cart">
+      <div style="padding: 26px 26px 0;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 9px;">
+            <span style="font-family: 'Material Symbols Outlined'; font-size: 24px; color: #2054dc;">content_paste</span>
+            <h2 style="font-family: 'Plus Jakarta Sans','Noto Sans KR',sans-serif; font-weight: 800; font-size: 19px; margin: 0; color: #111827;">선택한 프롬프트</h2>
+          </div>
+          <sc-if value="{{ hasSelections }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ onClearAll }}" style="border: 1px solid #e5e7eb; background: #ffffff; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #9ca3af; cursor: pointer; font-family: 'Noto Sans KR',sans-serif; line-height:1;" style-hover="color: #ef4444; border-color: #fca5a5; background: #fff7f7;">전체 비우기</button>
+          </sc-if>
+        </div>
+        <div style="font-size: 12.5px; color: #9ca3af; margin-top: 4px;">{{ countLabel }}</div>
+
+        <!-- subject -->
+        <div style="margin-top: 22px;">
+          <label style="display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #6b7280; text-transform: uppercase; margin-bottom: 8px;">주제 / 대상 <span style="color:#9ca3af; font-weight:500; text-transform:none; letter-spacing:0;">(선택)</span></label>
+          <input type="text" onInput="{{ onSubjectInput }}" defaultValue="{{ subject }}" placeholder="예: a young Korean woman, 24SS 립밤" class="spb-subject-input" style="width: 100%; padding: 11px 13px; border: 1px solid #e5e7eb; border-radius: 11px; background: #f9fafb; font-size: 14px; color: #111827; font-family: 'Noto Sans KR',sans-serif; outline: none;" style-focus="border-color: #2054dc; background: #ffffff; box-shadow: 0 0 0 3px #dcecf8;" />
+        </div>
+
+        <!-- groups -->
+        <sc-if value="{{ hasSelections }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 24px; display: flex; flex-direction: column; gap: 20px;">
+            <sc-for list="{{ groups }}" as="group" hint-placeholder-count="2">
+              <div>
+                <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 9px;">
+                  <span style="font-family: 'Material Symbols Outlined'; font-size: 17px; color: #9ca3af;">{{ group.icon }}</span>
+                  <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #6b7280;">{{ group.label }}</span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <sc-for list="{{ group.items }}" as="chip" hint-placeholder-count="2">
+                    <button onClick="{{ chip.onRemove }}" style="display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px 8px 13px; border-radius: 999px; border: 1px solid #cfe0fb; background: #f3f8ff; cursor: pointer; font-family: 'Noto Sans KR',sans-serif;" style-hover="border-color: #fca5a5; background: #fef2f2;">
+                      <span style="font-size: 13px; font-weight: 600; color: #1e40af;">{{ chip.ko }}</span>
+                      <span style="font-family: 'Material Symbols Outlined'; font-size: 16px; color: #93a3c4;">close</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 26px; padding: 34px 20px; border: 1.5px dashed #e5e7eb; border-radius: 16px; text-align: center;">
+            <span style="font-family: 'Material Symbols Outlined'; font-size: 34px; color: #d1d5db;">add_photo_alternate</span>
+            <div style="font-size: 13.5px; color: #9ca3af; margin-top: 8px; line-height: 1.6;">왼쪽 카드를 눌러<br>원하는 구도를 추가하세요.</div>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- generated prompt -->
+      <div style="margin-top: 24px; padding: 18px 22px 22px; background: #0f1729; border-radius: 0 0 20px 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #8aa0c9;">생성된 프롬프트</span>
+          <span style="font-size: 11.5px; color: #5f7299;">{{ wordCount }}</span>
+        </div>
+        <div style="background: #182236; border-radius: 12px; padding: 14px; min-height: 64px; max-height: 150px; overflow-y: auto; font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.65; color: #e3ebfa;">{{ promptDisplay }}</div>
+        <button onClick="{{ onCopy }}" style="{{ copyBtnStyle }}" style-hover="filter: brightness(1.08);">
+          <span style="font-family: 'Material Symbols Outlined'; font-size: 19px;">{{ copyIcon }}</span>
+          <span>{{ copyLabel }}</span>
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="app-footer">Copyright 2026 ONROE. All rights reserved.</footer>
+
+  <sc-if value="{{ hasFloatingTooltip }}" hint-placeholder-val="{{ false }}">
+    <div style="{{ floatingTooltipStyle }}">{{ floatingTooltipText }}</div>
+  </sc-if>
+
+  <sc-if value="{{ copied }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 13px 22px; border-radius: 999px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 9px; box-shadow: 0 12px 30px rgba(0,0,0,0.25); animation: spbToast 1.8s ease forwards; z-index: 50;">
+      <span style="font-family: 'Material Symbols Outlined'; font-size: 19px; color: #6ee7b7;">check_circle</span>
+      프롬프트가 복사되었습니다
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 820}, &quot;showEnglishTerms&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;}, &quot;singleSelectPerCategory&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;}}">
+
+class Component extends DCLogic {
+  state = (function () {
+    try {
+      const s = JSON.parse(localStorage.getItem('spb_v4_flow_help') || '{}');
+      return {
+        mode: s.mode || 'image',
+        subject: s.subject || '',
+        selections: s.selections || {},
+        active: s.active || 'usage',
+        copied: false,
+        hover: null,
+        tooltip: null
+      };
+    } catch (e) {
+      return { mode: 'image', subject: '', selections: {}, active: 'usage', copied: false, hover: null, tooltip: null };
+    }
+  })();
+
+  frameBase = 'assets/img_002_1137df9fd01f.jpg';
+
+  compositionIcon(kind) {
+    const person = (x, y, s, back) => `
+      <g transform="translate(${x} ${y}) scale(${s})" fill="#050505" stroke="#050505" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="0" cy="-46" r="13"/>
+        <path d="M-15 -30 Q0 -42 15 -30 L18 26 Q0 38 -18 26 Z"/>
+        <path d="M-18 -15 L-33 10 M18 -15 L33 10 M-8 29 L-15 68 M8 29 L15 68" stroke-width="8"/>
+        <path d="M-18 68 L-5 68 M5 68 L18 68" stroke-width="7"/>
+        ${back ? '<path d="M-13 -52 Q0 -64 13 -52" fill="none" stroke-width="7"/>' : '<circle cx="-5" cy="-47" r="1.8" fill="#fff"/><circle cx="5" cy="-47" r="1.8" fill="#fff"/>'}
+      </g>`;
+    const building = '<path d="M68 204 L68 120 L160 68 L252 120 L252 204" fill="#f2f3f5" stroke="#050505" stroke-width="6"/><path d="M60 120 H260 M82 132 H238 M95 148 V204 M130 148 V204 M190 148 V204 M225 148 V204" fill="none" stroke="#050505" stroke-width="5"/><path d="M146 204 V166 Q160 150 174 166 V204" fill="#fff" stroke="#050505" stroke-width="5"/>';
+    const landscape = '<path d="M24 194 Q70 150 118 188 T210 186 T296 174" fill="#050505"/><path d="M0 196 H320" stroke="#050505" stroke-width="4"/>';
+    const drawings = {
+      center: `${person(160, 163, 1.12, false)}`,
+      thirds: `<path d="M107 18 V302 M213 18 V302 M18 107 H302 M18 213 H302" stroke="#050505" stroke-width="4" fill="none"/>${landscape}${person(198, 219, .55, true)}`,
+      symmetry: `<path d="M160 24 V296" stroke="#050505" stroke-width="5"/>${building}${person(160, 196, .78, false)}`,
+      leading: `<path d="M0 151 H320 M160 150 L82 302 M160 150 L238 302" stroke="#050505" stroke-width="6" fill="none"/><path d="M160 196 L150 302 M160 196 L170 302" stroke="#050505" stroke-width="4" fill="none"/>${person(160, 158, .55, false)}`,
+      frame: `<rect x="64" y="72" width="192" height="160" fill="#f0f1f3" stroke="#050505" stroke-width="7"/><rect x="82" y="90" width="156" height="124" fill="#fff" stroke="#050505" stroke-width="5"/>${person(160, 188, .72, false)}<path d="M58 232 H262" stroke="#050505" stroke-width="8"/>`,
+      frameOpen: `<rect x="88" y="82" width="144" height="158" fill="#fff" stroke="#050505" stroke-width="7"/><path d="M88 88 L42 68 V248 L88 232 M232 88 L278 68 V248 L232 232" fill="#f2f3f5" stroke="#050505" stroke-width="6"/><path d="M58 238 H262" stroke="#050505" stroke-width="8"/>${person(160, 194, .74, false)}`,
+      negative: `${person(160, 219, .5, false)}`,
+      silhouette: `<circle cx="160" cy="160" r="136" fill="url(#halo)"/>${person(160, 205, 1.35, true)}`,
+      back: `${landscape}<path d="M160 162 L80 302 M160 162 L240 302" stroke="#050505" stroke-width="5" fill="none"/>${person(160, 208, 1.02, true)}`
+    };
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">
+      <defs><radialGradient id="halo" cx="50%" cy="44%" r="58%"><stop offset="0%" stop-color="#fff"/><stop offset="42%" stop-color="#e5e7eb"/><stop offset="100%" stop-color="#5f6368"/></radialGradient><clipPath id="iconClip"><circle cx="160" cy="160" r="146"/></clipPath></defs>
+      <rect width="320" height="320" fill="#fff"/>
+      <circle cx="160" cy="160" r="147" fill="none" stroke="#050505" stroke-width="11"/>
+      <g clip-path="url(#iconClip)">${drawings[kind] || drawings.center}</g>
+    </svg>`;
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+  }
+
+  techniqueIcon(kind) {
+    const paths = {
+      halation: 'assets/img_003_0fbf6e097705.png',
+      bloom: 'assets/img_004_8744a9ada6e1.png',
+      lifted: 'assets/img_005_99f57e9d3eac.png',
+      chromatic: 'assets/img_006_9076b29ca5d6.png',
+      diffusion: 'assets/img_007_c40ab4596b91.png',
+      grain: 'assets/img_008_629171ef40e1.png'
+    };
+    return paths[kind] || paths.grain;
+    const portrait = `
+      <circle cx="160" cy="124" r="41" fill="#322922" opacity=".82"/>
+      <circle cx="160" cy="151" r="38" fill="#f2b79c"/>
+      <path d="M111 277 C116 218 131 187 160 187 C189 187 204 218 209 277 Z" fill="#fff7ef" stroke="#8b6f5c" stroke-width="6" opacity=".92"/>
+      <path d="M126 135 C136 98 187 96 197 135 C187 118 169 123 158 115 C147 126 134 120 126 135 Z" fill="#2f261f"/>
+      <circle cx="145" cy="150" r="4" fill="#8b6f5c"/><circle cx="175" cy="150" r="4" fill="#8b6f5c"/>
+      <path d="M160 153 L156 169 M145 181 Q160 190 176 181" fill="none" stroke="#8b6f5c" stroke-width="5" stroke-linecap="round"/>
+    `;
+    const drawings = {
+      halation: `
+        <rect width="320" height="320" fill="#1f3c61"/>
+        <radialGradient id="halationGlow" cx="50%" cy="42%" r="52%"><stop offset="0%" stop-color="#fff7c7"/><stop offset="38%" stop-color="#f8d687" stop-opacity=".78"/><stop offset="100%" stop-color="#1f3c61" stop-opacity="0"/></radialGradient>
+        <circle cx="160" cy="137" r="130" fill="url(#halationGlow)"/>
+        <path d="M160 86 L133 108 L126 158 L194 158 L187 108 Z" fill="#fff2b8" stroke="#6d5435" stroke-width="9" stroke-linejoin="round"/>
+        <path d="M142 108 H178 M139 158 L124 184 H196 L181 158 M160 184 V300" fill="none" stroke="#4d3928" stroke-width="8" stroke-linecap="round"/>
+        <path d="M128 103 Q160 57 192 103 M145 80 Q160 48 175 80" fill="none" stroke="#6d5435" stroke-width="8" stroke-linecap="round"/>
+      `,
+      bloom: `
+        <rect width="320" height="320" fill="#f2d6ad"/>
+        <radialGradient id="bloomGlow" cx="67%" cy="36%" r="48%"><stop offset="0%" stop-color="#fff"/><stop offset="45%" stop-color="#fff4cb" stop-opacity=".84"/><stop offset="100%" stop-color="#f2d6ad" stop-opacity="0"/></radialGradient>
+        <rect x="72" y="58" width="178" height="204" fill="#f7e5c8" stroke="#9c7b55" stroke-width="7"/>
+        <rect x="92" y="84" width="66" height="148" fill="#fff8dc" stroke="#c8a36f" stroke-width="5"/>
+        <rect x="164" y="84" width="66" height="148" fill="#fff8dc" stroke="#c8a36f" stroke-width="5"/>
+        <circle cx="207" cy="116" r="122" fill="url(#bloomGlow)"/>
+        <path d="M231 120 V170" stroke="#9c7b55" stroke-width="8" stroke-linecap="round"/>
+      `,
+      lifted: `
+        <rect width="320" height="320" fill="#4c4c4a"/>
+        <g transform="rotate(-9 124 159)"><rect x="66" y="65" width="132" height="178" fill="#f4f1e8" stroke="#242424" stroke-width="6"/><rect x="84" y="84" width="96" height="96" fill="#6f6f6a"/><path d="M96 164 Q132 120 170 164" fill="#272727" opacity=".75"/><circle cx="121" cy="124" r="12" fill="#222"/><circle cx="145" cy="124" r="12" fill="#222"/></g>
+        <g transform="rotate(7 215 152)"><rect x="180" y="69" width="94" height="163" fill="#f4f1e8" stroke="#242424" stroke-width="6"/><path d="M199 87 H252 V212 H199 Z" fill="#777"/><path d="M203 92 L248 212 M252 92 L204 212" stroke="#2a2a2a" stroke-width="8"/></g>
+        <rect width="320" height="320" fill="#e8e0cc" opacity=".16"/>
+      `,
+      chromatic: `
+        <rect width="320" height="320" fill="#f8fbff"/>
+        <path d="M35 93 H198 Q215 61 239 87 Q263 81 273 111 Q298 119 285 151 Q294 178 260 184 H35 Z" fill="#83b579" opacity=".95"/>
+        <path d="M52 100 C88 153 102 158 148 176" fill="none" stroke="#0aa5d6" stroke-width="8"/>
+        <path d="M47 97 C83 150 97 155 143 173" fill="none" stroke="#e23152" stroke-width="8"/>
+        <path d="M45 95 C81 148 95 153 141 171" fill="none" stroke="#5a5a2a" stroke-width="6"/>
+        <path d="M206 320 V205 L290 127 V320 M35 320 V228 L105 228 V320" fill="#83b4d8" stroke="#0aa5d6" stroke-width="8"/>
+        <path d="M199 320 V199 L283 121 M28 320 V222 L98 222" fill="none" stroke="#e23152" stroke-width="8"/>
+      `,
+      diffusion: `
+        <rect width="320" height="320" fill="#8e816e"/>
+        <radialGradient id="diffGlow" cx="50%" cy="48%" r="62%"><stop offset="0%" stop-color="#fff4d9" stop-opacity=".88"/><stop offset="62%" stop-color="#d6c2a7" stop-opacity=".28"/><stop offset="100%" stop-color="#4b4037" stop-opacity=".38"/></radialGradient>
+        <circle cx="160" cy="160" r="145" fill="url(#diffGlow)"/>
+        ${portrait}
+        <rect width="320" height="320" fill="#fff" opacity=".18"/>
+      `,
+      grain: `
+        <rect width="320" height="320" fill="#efe0d1"/>
+        <radialGradient id="grainGlow" cx="50%" cy="45%" r="70%"><stop offset="0%" stop-color="#fff8ec"/><stop offset="55%" stop-color="#f0c7b9" stop-opacity=".7"/><stop offset="100%" stop-color="#c89472" stop-opacity=".45"/></radialGradient>
+        <circle cx="160" cy="160" r="150" fill="url(#grainGlow)"/>
+        ${portrait}
+        <path d="M44 82 H49 M80 216 H86 M116 58 H122 M222 82 H228 M248 210 H255 M73 137 H78 M205 253 H211 M270 151 H276 M134 242 H139 M184 58 H189" stroke="#765f51" stroke-width="5" stroke-linecap="round" opacity=".5"/>
+        <rect width="320" height="320" fill="#fff" opacity=".22"/>
+      `
+    };
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">
+      <defs><clipPath id="filmClip"><circle cx="160" cy="160" r="146"/></clipPath></defs>
+      <rect width="320" height="320" fill="#fff"/>
+      <g clip-path="url(#filmClip)">${drawings[kind] || drawings.grain}</g>
+      <circle cx="160" cy="160" r="147" fill="none" stroke="#050505" stroke-width="11"/>
+    </svg>`;
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+  }
+
+  filmIcon(kind) {
+    const paths = {
+      halation: 'assets/img_009_b1214a44617e.png',
+      bloom: 'assets/img_010_b2cbdba771a7.png',
+      lifted: 'assets/img_011_6f0c1b3f1698.png',
+      chromatic: 'assets/img_012_eecc2f5fb9fb.png',
+      diffusion: 'assets/img_013_b4af62d2d966.png',
+      grain: 'assets/img_014_b43f430fab32.png'
+    };
+    return paths[kind] || paths.grain;
+    const noise = Array.from({ length: 95 }, (_, i) => {
+      const x = (i * 47) % 320;
+      const y = (i * 83) % 320;
+      const a = ((i % 7) + 2) / 18;
+      const r = (i % 3) + 1;
+      return `<circle cx="${x}" cy="${y}" r="${r}" fill="#111" opacity="${a}"/>`;
+    }).join('');
+    const drawings = {
+      halation: `
+        <rect width="320" height="320" fill="#2b1713"/>
+        <linearGradient id="filmHalCurtain" x1="0" x2="1"><stop offset="0%" stop-color="#351b18"/><stop offset="45%" stop-color="#6c3329"/><stop offset="100%" stop-color="#2c1714"/></linearGradient>
+        <rect x="170" width="150" height="320" fill="url(#filmHalCurtain)"/>
+        <path d="M205 0 V320 M238 0 V320 M272 0 V320" stroke="#1c0e0c" stroke-width="8" opacity=".28"/>
+        <radialGradient id="filmHalGlow" cx="45%" cy="43%" r="55%"><stop offset="0%" stop-color="#fff6cf"/><stop offset="26%" stop-color="#ffd596" stop-opacity=".95"/><stop offset="58%" stop-color="#d84732" stop-opacity=".72"/><stop offset="100%" stop-color="#2b1713" stop-opacity="0"/></radialGradient>
+        <circle cx="146" cy="135" r="142" fill="url(#filmHalGlow)"/>
+        <path d="M115 95 H172 L191 154 H96 Z" fill="#fff5c8" stroke="#7c4a35" stroke-width="7"/>
+        <rect x="135" y="154" width="16" height="106" fill="#4b2d22"/>
+        <ellipse cx="143" cy="267" rx="54" ry="16" fill="#1d1110" opacity=".55"/>
+        <rect width="320" height="320" fill="#f59f62" opacity=".08"/>
+      `,
+      bloom: `
+        <linearGradient id="filmBloomSky" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8f4d4"/><stop offset="100%" stop-color="#8dbb73"/></linearGradient>
+        <rect width="320" height="320" fill="url(#filmBloomSky)"/>
+        <rect x="0" y="0" width="46" height="320" fill="#f7f0db" opacity=".92"/><rect x="274" y="0" width="46" height="320" fill="#f7f0db" opacity=".92"/>
+        <path d="M46 55 Q155 5 274 61 V320 H46 Z" fill="#b8d884" opacity=".78"/>
+        <radialGradient id="filmBloomGlow" cx="48%" cy="15%" r="58%"><stop offset="0%" stop-color="#fff"/><stop offset="35%" stop-color="#fff8cf" stop-opacity=".95"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+        <circle cx="160" cy="57" r="155" fill="url(#filmBloomGlow)"/>
+        <path d="M49 250 C90 215 122 210 160 237 C200 205 239 216 273 250 V320 H49 Z" fill="#6c9b5f" opacity=".75"/>
+        <g fill="#f7c4c5" opacity=".95"><circle cx="78" cy="234" r="8"/><circle cx="118" cy="220" r="7"/><circle cx="218" cy="224" r="8"/><circle cx="248" cy="246" r="6"/></g>
+        <g fill="#ffffff" opacity=".82"><circle cx="92" cy="56" r="10"/><circle cx="137" cy="40" r="8"/><circle cx="198" cy="63" r="11"/><circle cx="228" cy="94" r="7"/></g>
+        <rect width="320" height="320" fill="#fff" opacity=".15"/>
+      `,
+      lifted: `
+        <rect width="320" height="320" fill="#d6d1c8"/>
+        <path d="M0 240 H320 V320 H0 Z" fill="#c5c1bb"/>
+        <path d="M15 78 H81 V232 H15 Z M110 46 H164 V230 H110 Z M202 57 H291 V236 H202 Z" fill="#7d7d78" opacity=".55"/>
+        <path d="M30 102 H70 M30 132 H70 M30 162 H70 M120 80 H150 M120 112 H150 M215 88 H276 M215 126 H276 M215 164 H276" stroke="#3d3d3b" stroke-width="6" opacity=".46"/>
+        <path d="M0 236 C58 213 103 201 160 207 C212 212 263 228 320 211 V320 H0 Z" fill="#e8e4dc" opacity=".55"/>
+        <g fill="#2f2f2d" opacity=".62"><circle cx="161" cy="178" r="9"/><path d="M150 225 L158 188 H165 L174 225 Z"/><circle cx="222" cy="191" r="7"/><path d="M214 232 L220 199 H225 L234 232 Z"/><circle cx="90" cy="199" r="6"/><path d="M84 235 L89 206 H94 L101 235 Z"/></g>
+        <rect width="320" height="320" fill="#f2eee7" opacity=".36"/>
+      `,
+      chromatic: `
+        <rect width="320" height="320" fill="#ecf8ff"/>
+        <path d="M153 320 C149 253 154 189 174 122 C186 82 202 47 226 0" stroke="#25201b" stroke-width="14" fill="none" stroke-linecap="round"/>
+        <g fill="none" stroke-linecap="round" stroke-width="8" opacity=".95">
+          <path d="M166 132 C119 103 87 73 60 23 M172 154 C121 157 82 172 42 204 M179 101 C143 74 124 44 111 5 M183 171 C217 145 252 132 302 127" stroke="#e12d3e"/>
+          <path d="M174 134 C127 105 95 75 68 25 M180 156 C129 159 90 174 50 206 M187 103 C151 76 132 46 119 7 M191 173 C225 147 260 134 310 129" stroke="#00a6d6"/>
+          <path d="M170 133 C123 104 91 74 64 24 M176 155 C125 158 86 173 46 205 M183 102 C147 75 128 45 115 6 M187 172 C221 146 256 133 306 128" stroke="#28241f"/>
+        </g>
+        <rect width="320" height="320" fill="#fff" opacity=".08"/>
+      `,
+      diffusion: `
+        <linearGradient id="filmDiffBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6f815e"/><stop offset="58%" stop-color="#d7b59d"/><stop offset="100%" stop-color="#8b745e"/></linearGradient>
+        <rect width="320" height="320" fill="url(#filmDiffBg)"/>
+        <g fill="#f4b9ba" opacity=".58"><circle cx="55" cy="75" r="18"/><circle cx="254" cy="83" r="20"/><circle cx="66" cy="224" r="16"/><circle cx="248" cy="230" r="18"/></g>
+        <radialGradient id="filmDiffGlow" cx="50%" cy="45%" r="68%"><stop offset="0%" stop-color="#fff4dc" stop-opacity=".94"/><stop offset="64%" stop-color="#fff" stop-opacity=".22"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+        <circle cx="160" cy="154" r="154" fill="url(#filmDiffGlow)"/>
+        <path d="M100 320 C111 239 130 200 160 200 C191 200 212 239 222 320 Z" fill="#fff4ed" opacity=".82"/>
+        <circle cx="160" cy="149" r="45" fill="#f0b79f"/>
+        <path d="M113 144 C124 87 191 84 207 141 C192 113 169 119 156 106 C142 122 126 118 113 144 Z" fill="#4a352d"/>
+        <path d="M145 154 Q160 145 176 154 M144 178 Q160 188 178 177" stroke="#815f54" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <rect width="320" height="320" fill="#fff" opacity=".26"/>
+        <filter id="filmSoft"><feGaussianBlur stdDeviation="3"/></filter><rect width="320" height="320" fill="#fff" opacity=".13" filter="url(#filmSoft)"/>
+      `,
+      grain: `
+        <linearGradient id="filmGrainBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#d8d8d8"/><stop offset="45%" stop-color="#6f6f6f"/><stop offset="100%" stop-color="#181818"/></linearGradient>
+        <rect width="320" height="320" fill="url(#filmGrainBg)"/>
+        <path d="M0 235 C54 184 83 186 126 229 C162 264 224 262 320 205 V320 H0 Z" fill="#efefef" opacity=".42"/>
+        <path d="M45 62 C74 44 95 65 89 97 C82 133 50 126 45 92 Z M227 76 C254 58 283 82 274 118 C266 149 229 140 224 103 Z" fill="#1d1d1d" opacity=".44"/>
+        ${noise}
+        <rect width="320" height="320" fill="#000" opacity=".12"/>
+      `
+    };
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">
+      <defs><clipPath id="filmNewClip"><circle cx="160" cy="160" r="146"/></clipPath></defs>
+      <rect width="320" height="320" fill="#fff"/>
+      <g clip-path="url(#filmNewClip)">${drawings[kind] || drawings.grain}</g>
+      <circle cx="160" cy="160" r="147" fill="none" stroke="#050505" stroke-width="11"/>
+    </svg>`;
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+  }
+
+  data = [
+    {
+      id: 'usage', label: '사용법', icon: 'help',
+      eyebrow: 'HOW TO USE', title: 'PROMPT ROE',
+      desc: '필요한 프롬프트만 골라 담으세요.',
+      options: []
+    },
+
+    {
+      id: 'frame', label: '샷 크기', icon: 'crop_free',
+      eyebrow: 'SHOOTING', title: '어떤 샷 크기로 담을까요?',
+      desc: '번호가 표시된 프레이밍 영역 위에 마우스를 올리면 각 샷 크기 설명을 바로 확인할 수 있습니다.',
+      compact: true,
+      options: [
+        { id: 'frame-1', number: 1, ko: '익스트림 클로즈업', en: 'extreme close-up', desc: '눈·입술 등 디테일만 크게 잡는 컷', x: 44.80, y: 14.58, w: 10.43, h: 13.67, ax: 50.097656, ay: 25.768476 },
+        { id: 'frame-2', number: 2, ko: '클로즈업', en: 'close-up shot', desc: '얼굴과 표정에 집중하는 가까운 컷', x: 43.19, y: 13.28, w: 13.66, h: 21.52, ax: 50.097656, ay: 32.308698 },
+        { id: 'frame-3', number: 3, ko: '루즈 클로즈업', en: 'loose close-up', desc: '얼굴과 상반신이 함께 들어오는 컷', x: 40.43, y: 12.39, w: 19.09, h: 31.77, ax: 50.097656, ay: 41.988228 },
+        { id: 'frame-4', number: 4, ko: '미디엄 샷', en: 'medium shot', desc: '허리 위까지, 인물과 제스처가 보이는 기본 구도', x: 37.72, y: 11.35, w: 24.51, h: 48.72, ax: 50.097656, ay: 57.815566 },
+        { id: 'frame-5', number: 5, ko: '카우보이 샷', en: 'medium-full shot, framed from mid-thigh up to the top of the head, full torso and upper legs visible, generous headroom', desc: '허벅지 위까지 담는 시네마틱 구도', x: 35.86, y: 10.24, w: 28.22, h: 62.89, ax: 50.097656, ay: 70.896010 },
+        { id: 'frame-6', number: 6, ko: '풀 샷', en: 'full shot', desc: '머리부터 발끝까지 전신을 담는 컷', x: 32.98, y: 8.14, w: 33.98, h: 81.59, ax: 50.097656, ay: 87.508175 },
+        { id: 'frame-7', number: 7, ko: '와이드 샷', en: 'wide shot', desc: '인물과 주변 공간을 함께 담는 넓은 구도', x: 17.99, y: 6.97, w: 63.96, h: 85.97, ax: 50.097656, ay: 91.824722 },
+        { id: 'frame-8', number: 8, ko: '익스트림 와이드 샷', en: 'extreme wide shot', desc: '인물이 작게 보일 만큼 광활한 배경을 강조', x: 6.71, y: 5.00, w: 86.52, h: 90.71, ax: 50.097656, ay: 95.748855 }
+      ]
+    },
+
+
+    {
+      id: 'angle', label: '시점', icon: '3d_rotation',
+      eyebrow: 'SHOOTING', title: '어느 시점에서 볼까요?',
+      desc: '카메라의 높이와 방향이 인상을 결정합니다.',
+      options: [
+        { id: 'eye', ko: '아이 레벨', en: 'eye-level camera', thumbSrc: 'assets/img_015_1a528320a871.png', desc: '사람의 눈높이에서 보는 자연스러운 각도' },
+        { id: 'mcu', ko: '미디엄 클로즈업', en: 'medium close-up', thumbSrc: 'assets/img_016_5df5ca581be8.png', desc: '가슴 위주로 인물을 담는 가까운 구도' },
+        { id: 'high', ko: '하이 앵글', en: 'high angle, looking down', thumbSrc: 'assets/img_017_dadf96ff86f2.png', desc: '위에서 내려다보는 시선' },
+        { id: 'low', ko: '로우 앵글', en: 'low angle, looking up', thumbSrc: 'assets/img_018_62c8dab9708a.png', desc: '아래에서 올려다보는 시선' },
+        { id: 'ots', ko: '오버 더 숄더 샷', en: 'over-the-shoulder shot', thumbSrc: 'assets/img_019_24f3b3bbd3c2.png', desc: '어깨 너머로 바라보는 시선' },
+        { id: 'pov', ko: '1인칭 시점 샷', en: 'point-of-view shot, first person', thumbSrc: 'assets/img_020_19fc2771b168.png', desc: '인물의 시선으로 직접 보는 1인칭 시점' },
+        { id: 'dutch', ko: '더치 앵글', en: 'dutch angle, tilted camera', thumbSrc: 'assets/img_021_f2fd793fb669.png', desc: '기울어진 카메라로 불안정함을 연출' },
+        { id: 'bird', ko: '조감도', en: "bird's-eye view, top-down", thumbSrc: 'assets/img_022_9677925a7774.png', desc: '위에서 수직에 가깝게 내려다보는 시점' },
+        { id: 'worm', ko: '웜즈 아이 뷰', en: "worm's-eye view, from below", thumbSrc: 'assets/img_023_e59f4b349147.png', desc: '극단적으로 아래에서 올려다보는 시점' },
+        { id: 'est', ko: '상황 설명용 원경', en: 'establishing shot', thumbSrc: 'assets/img_024_2423a0b597d3.png', desc: '장면과 공간을 먼저 보여주는 원경' }
+      ]
+    },
+    {
+      id: 'composition', label: '구도', icon: 'grid_view',
+      eyebrow: 'SHOOTING', title: '어떤 화면 구도가 좋을까요?',
+      desc: '피사체와 배경의 배치 방식으로 화면의 균형과 시선 흐름을 정합니다.',
+      options: [
+        { id: 'comp-center', ko: '중앙 구도', en: 'centered composition', desc: '피사체를 화면 중앙에 안정적으로 배치', thumbSrc: 'assets/img_025_9b9b5280ae65.png' },
+        { id: 'comp-thirds', ko: '삼분할 구도', en: 'rule of thirds composition', desc: '삼분할 지점에 피사체와 배경을 배치', thumbSrc: 'assets/img_026_97ec6546cf3c.png' },
+        { id: 'comp-symmetry', ko: '대칭 구도', en: 'symmetrical composition', desc: '좌우 균형을 맞춰 정돈된 인상 구성', thumbSrc: 'assets/img_027_7c7eb3bea1b0.png' },
+        { id: 'comp-leading', ko: '유도선', en: 'leading lines composition', desc: '선의 흐름으로 시선을 피사체로 유도', thumbSrc: 'assets/img_028_c9021c1aa9ce.png' },
+        { id: 'comp-frame', ko: '프레임 속 프레임', en: 'frame within a frame composition', desc: '창이나 구조물 안에 피사체를 배치', thumbSrc: 'assets/img_029_a05909a71b69.png' },
+        { id: 'comp-frame-open', ko: '프레임 속 프레임', en: 'open window frame within a frame composition', desc: '열린 창문 프레임으로 피사체를 강조', thumbSrc: 'assets/img_030_6769ac521cde.png' },
+        { id: 'comp-negative', ko: '여백 구도', en: 'negative space composition', desc: '넓은 여백으로 피사체를 작고 선명하게 배치', thumbSrc: 'assets/img_031_4158054b05a2.png' },
+        { id: 'comp-silhouette', ko: '실루엣', en: 'silhouette composition', desc: '역광 윤곽으로 형태와 분위기를 강조', thumbSrc: 'assets/img_032_11fcefce5e0d.png' },
+        { id: 'comp-back', ko: '뒷모습 샷', en: 'back view shot composition', desc: '뒤에서 바라보는 구도로 시선과 여운을 표현', thumbSrc: 'assets/img_033_b2bef4b4fa19.png' }
+      ]
+    },
+    {
+      id: 'lens', label: '렌즈', icon: 'camera',
+      eyebrow: 'SHOOTING', title: '어떤 렌즈 느낌일까요?',
+      desc: '화각과 심도가 분위기를 좌우합니다.',
+      options: [
+        { id: 'l24', ko: '24mm (광각)', en: '24mm wide-angle lens', thumbSrc: 'assets/img_034_d8757c88cba0.png', desc: '넓은 공간감과 시원한 화각' },
+        { id: 'l35', ko: '35mm (표준 광각)', en: '35mm standard wide lens', thumbSrc: 'assets/img_035_e7d892d6eeb3.png', desc: '자연스러우면서도 공간감 있는 화각' },
+        { id: 'l50', ko: '50mm (표준)', en: '50mm standard lens', thumbSrc: 'assets/img_036_14169b9b16d7.png', desc: '가장 자연스럽고 균형 잡힌 시야' },
+        { id: 'l70', ko: '70mm (인물)', en: '70mm portrait lens', thumbSrc: 'assets/img_037_b0a0116c104d.png', desc: '인물 비중을 살리는 준망원 화각' },
+        { id: 'l85', ko: '85mm (인물)', en: '85mm portrait lens, shallow depth of field', thumbSrc: 'assets/img_038_b5303de08219.png', desc: '부드러운 배경 흐림의 인물 렌즈' },
+        { id: 'l135', ko: '135mm (망원)', en: '135mm telephoto lens, compressed perspective', thumbSrc: 'assets/img_039_a653289e672f.png', desc: '배경 압축과 피사체 분리감이 큰 화각' },
+        { id: 'macro', ko: '마이크로 (접사)', en: 'macro lens, extreme close-up detail', thumbSrc: 'assets/img_040_96f8bf1393be.png', desc: '표면 질감과 디테일을 극대화하는 접사' }
+      ]
+    },
+
+
+    {
+      id: 'light', label: '라이팅', icon: 'wb_sunny',
+      eyebrow: 'LIGHTING', title: '어떤 조명일까요?',
+      desc: '조명은 사진의 분위기와 감정을 만듭니다.',
+      options: [
+        { id: 'natural', ko: '자연광', en: 'natural light', thumbSrc: 'assets/img_041_f9f1d162cf13.png', desc: '창가와 햇빛의 자연스러운 빛' },
+        { id: 'soft', ko: '소프트 라이트', en: 'soft light', thumbSrc: 'assets/img_042_a490c1fd892b.png', desc: '부드럽고 고른 조명' },
+        { id: 'cinematic', ko: '시네마틱 라이팅', en: 'cinematic lighting', thumbSrc: 'assets/img_043_6381c6cd6645.png', desc: '강한 명암과 영화 같은 조명' },
+        { id: 'rim', ko: '림 라이트 / 백라이트', en: 'rim light, backlight', thumbSrc: 'assets/img_044_ee33f5d711d0.png', desc: '윤곽을 강조하는 뒤쪽 빛' },
+        { id: 'lowkey', ko: '로우키 라이팅', en: 'low-key lighting', thumbSrc: 'assets/img_045_f5d83f579348.png', desc: '깊은 그림자와 낮은 키 조명' },
+        { id: 'studio', ko: '스튜디오 라이팅', en: 'studio lighting', thumbSrc: 'assets/img_046_ad3bafb0f3a8.png', desc: '컨트롤된 스튜디오 조명' },
+        { id: 'fill', ko: '필 라이트', en: 'fill light', thumbSrc: 'assets/img_047_9eab34e3b37b.png', desc: '그림자를 부드럽게 채우는 빛' },
+        { id: 'volumetric', ko: '볼륨 라이트', en: 'volumetric light', thumbSrc: 'assets/img_048_7bd915497e22.png', desc: '빛줄기와 공기감을 보여주는 조명' }
+      ]
+    },
+
+
+    {
+      id: 'naturalLight', label: '자연광', icon: 'wb_twilight',
+      eyebrow: 'LIGHTING', title: '어떤 자연광을 쓸까요?',
+      desc: '시간대와 날씨, 창문과 나뭇잎을 통과한 빛의 성격을 고릅니다.',
+      options: [
+        { id: "nl-golden-hour", ko: "골든아워", en: "warm golden hour light, amber glow, soft orange setting sun illumination", thumbSrc: "assets/img_049_e384496d83aa.png", desc: "일출·일몰 직전의 따뜻하고 로맨틱한 황금빛과 주황색 톤을 연출합니다." },
+        { id: "nl-blue-hour", ko: "블루아워", en: "blue hour lighting, twilight ambiance, deep blue and purple hues, serene moody light", thumbSrc: "assets/img_050_ffa3e51f5354.png", desc: "해질녘 직후의 차분하고 푸른빛이 감도는 몽환적이고 정적인 무드를 만듭니다." },
+        { id: "nl-midday", ko: "정오직사광", en: "harsh midday sun, direct sharp sunlight, intense hard shadows, high contrast illumination", thumbSrc: "assets/img_051_ddaec0ed7840.png", desc: "한낮의 강렬한 햇빛으로 대비가 강하고 깊고 선명한 그림자를 표현합니다." },
+        { id: "nl-overcast", ko: "흐린날확산광", en: "soft overcast daylight, diffused cloud light, shadowless photography, soft atmosphere", thumbSrc: "assets/img_052_f2415d92e052.png", desc: "구름에 가려진 부드러운 빛으로 그림자 없이 차분하고 은은한 분위기를 만듭니다." },
+        { id: "nl-window-side", ko: "창문측면광", en: "soft window light, cinematic side lighting, indoor natural light, dramatic shadow and light contrast", thumbSrc: "assets/img_053_b280a407001b.png", desc: "창문으로 들어오는 빛을 이용해 인물의 입체감과 드라마틱한 분위기를 극대화합니다." },
+        { id: "nl-dappled", ko: "나뭇잎사이빛", en: "dappled sunlight, sun rays filtering through foliage, beautiful leaf shadow patterns, organic light", thumbSrc: "assets/img_054_f279bb9b6df9.png", desc: "숲속 나뭇잎 사이로 햇살이 통과하며 생기는 싱그럽고 얼룩덜룩한 빛 패턴을 만듭니다." }
+      ]
+    },
+    {
+      id: 'bg', label: '배경', icon: 'wallpaper',
+      eyebrow: 'BACKGROUND', title: '어떤 배경을 사용할까요?',
+      desc: '배경의 종류를 고르면 장면의 공간감과 연출 무드가 정리됩니다.',
+      options: [{ section: '스튜디오' },
+        { id: 'studio-gallery', ko: '미니멀 갤러리', en: 'in an empty gallery space', thumbSrc: 'assets/img_055_be9b0ea13931.png', desc: 'Minimal Gallery Background' },
+        { id: 'studio-window', ko: '아치형 창가 스튜디오', en: 'standing next to a large vintage arched window with a white grid frame, bright and soft natural light pouring into a minimalist white-walled studio, clean light grey concrete floor with soft shadow gradations', thumbSrc: 'assets/img_056_d030268b7686.png', desc: 'Bright Window Side Studio' },
+        { id: 'studio-concrete', ko: '고대비 노출 콘크리트', en: 'standing in front of a minimalist white raw concrete wall with visible textures, under harsh and bright direct sunlight, a sharp and dark diagonal shadow cast on the left, a sliver of clear blue sky visible at the top, high contrast, crisp shadows', thumbSrc: 'assets/img_057_a54f6718ba96.png', desc: 'Brutalist Concrete Wall & High-Contrast Sunlight' },
+        { id: 'studio-warm', ko: '따뜻한 톤의 룩북 스튜디오', en: 'standing in a minimalist professional photo studio, solid neutral warm-grey backdrop, clean seamless background, illuminated by softbox lighting, ultra-soft diffused shadows on the floor, high-end lookbook mood', thumbSrc: 'assets/img_058_b729d06d599c.png', desc: 'Neutral Warm Studio Backdrop' },
+        { id: 'studio-softbox', ko: '조명 장비가 노출된 화이트 스튜디오', en: 'standing in a high-end fashion photography studio, seamless all-white cyclorama wall background, professional studio lighting setup with large vertical softboxes visible on the left and right edges of the frame, symmetrical lighting, bright and clean white studio floor, no harsh shadows', thumbSrc: 'assets/img_059_5edc618bf5fd.png', desc: 'Professional Studio Setup with Softbox Wings' },
+        { id: 'studio-ivory', ko: '부드러운 아이보리 톤의 호리존', en: 'standing in a minimalist photography studio, seamless warm ivory cyclorama background, clean off-white backdrop with no visible seams, evenly diffused soft lighting, very subtle and soft faint shadow on the floor around the feet, bright and natural atmosphere', thumbSrc: 'assets/img_060_1800b4c5ba8e.png', desc: 'Soft Ivory Bright Cyclorama' },
+        { id: 'studio-sunstreak', ko: '자연광 그림자가 드리운 화이트 스튜디오', en: 'sitting on the floor of a clean white seamless photography studio, bright natural sunlight casting distinct parallel streaks of light and shadow across the floor, soft warm sunlight filtering into the studio, minimalist and warm editorial mood, rich depth created by light play', thumbSrc: 'assets/img_061_c5dceb315f61.png', desc: 'Sunlight Streaks on White Infinity Wall' },
+
+        { section: '야외' },
+        { id: 'outdoor-bubblepark', ko: '비누방울 공원', en: 'in a lush green park with a spacious lawn and vibrant trees, several large iridescent soap bubbles with rainbow reflections floating around the space, illuminated by soft overcast daylight, dreamy shallow depth of field, gentle slice-of-life mood, nostalgic and whimsical atmosphere', thumbSrc: 'assets/img_062_f8c4a70586c3.png', desc: 'Whimsical Bubble Park' },
+        { id: 'outdoor-trumpet', ko: '능소화 여름 정원 벽', en: 'against a rustic vine-covered garden wall densely filled with vivid orange trumpet creeper flowers (Campsis grandiflora) and lush green vines, hanging orange trumpet-shaped blossoms framing the scene, bathed in warm afternoon sunlight with beautiful dappled shadows, shallow depth of field, candid joyful summer mood', thumbSrc: 'assets/img_063_e4f898d4b209.png', desc: 'Dappled Summer Trumpet Vine Wall' },
+        { id: 'outdoor-rooftop', ko: '일본 필름 옥상', en: 'on a minimalist rooftop edge area during summer, against an open empty sky with minimal elements, soft natural sunlight with slight overexposure highlights, low contrast with muted faded colors, subtle film grain, quiet isolated mood, nostalgic and reflective Japanese negative film aesthetic with a memory-like realism', thumbSrc: 'assets/img_064_da1aff53d7e0.png', desc: 'Faded Japanese Film Rooftop' },
+        { id: 'outdoor-picnic', ko: '황금빛 피크닉 들판', en: 'in an open grassy field and sun-drenched picnic meadow, bathed in warm golden-hour backlight creating a soft halo effect, slightly overexposed golden highlights, rich film grain texture, carefree and nostalgic summer vacation mood', thumbSrc: 'assets/img_065_a611443ed802.png', desc: 'Golden-Hour Picnic Meadow' },
+        { id: 'outdoor-skyflare', ko: '강렬한 하늘 렌즈 플레어', en: 'looking up from a ground perspective into a vast clear blue sky, illuminated by bright midday sun creating a strong artistic lens flare and glowing backlit effects, cinematic lighting, shallow depth of field, 35mm fisheye wide-angle look, vibrant colors, high-end fashion editorial style', thumbSrc: 'assets/img_066_9308d1be41fe.png', desc: 'Low-Angle Bright Midday Sky & Flare' }
+      ]
+    },
+    {
+      id: 'bgProduct', label: '배경', icon: 'wallpaper',
+      eyebrow: 'BACKGROUND', title: '어떤 배경을 사용할까요?',
+      desc: '배경의 종류를 고르면 장면의 공간감과 연출 무드가 정리됩니다.',
+      options: [{ section: '광고' },
+        { id: 'product-clouds', ko: '역광의 솜사탕 구름', en: 'against a blue sky with cotton candy-like clouds, illuminated by dramatic backlighting, 3D surreal rendering style suitable for a refreshing commercial product advertisement', thumbSrc: 'assets/img_067_a6270354e3b1.png', desc: 'Backlit Cotton Candy Clouds' },
+        { id: 'product-marble', ko: '에메랄드 비치 대리석 난간', en: 'placed on a marble ledge overlooking an emerald sea and white sand beach, top-down view, tilt-shift composition, shallow depth of field, high contrast, commercial advertising photography style', thumbSrc: 'assets/img_068_4e4ec590e3c1.png', desc: 'Emerald Beach Marble Ledge' },
+        { id: 'product-ice', ko: '물방울과 얼음이 떠오르는 청량한 배경', en: 'an ultra-high-resolution macro close-up shot, floating hops and ice cubes around the subject, diagonal composition, crisp natural light, vibrant blue-toned color palette, emphasizing freshness and vitality', thumbSrc: 'assets/img_069_fc5f11ed4751.png', desc: 'Floating Ice & Macro Nature' },
+        { id: 'product-beach', ko: '빛의 줄기가 있는 태양광 해변', en: 'placed on a sandy beach under harsh bright direct sunlight, vibrant light streaks in the background symbolizing sea, sky, and wind, sharp reflections, crisp material texture expression, 8K photorealistic commercial cut, lively and refreshing mood', thumbSrc: 'assets/img_070_47598c0ce57c.png', desc: 'Sunny Sand Beach with Light Streaks' },
+        { id: 'product-spotlight', ko: '스포트라이트가 있는 스튜디오 손 연출', en: 'a sophisticated editorial studio product shot, low-angle close-up, a neatly manicured adult hand holding the product, dramatic spotlight, soft diffused rim lighting, seamless muted grey gradient backdrop', thumbSrc: 'assets/img_071_996af879eb43.png', desc: 'Editorial Spotlight Studio with Hand Grip' },
+        { id: 'product-peony', ko: '분홍 작약과 룩북이 있는 미니멀 로우키 배경', en: 'a minimalist commercial product shot, solid black background with dramatic low-key lighting, the subject placed on a LOOKBOOK magazine, a slightly blurred ivory vase with pink peonies and white daisies in the background, elegant chrome accents, shot with a 100mm macro lens, high-resolution, 3:4 aspect ratio', thumbSrc: 'assets/img_072_d799f0809a7c.png', desc: 'Luxury Low-key Peony & Book Decor' },
+
+        { section: '뷰티' },
+        { id: 'beauty-dewy', ko: '물방울 플랫레이', en: 'placed at the center of a vibrant pastel-pink surface covered in fresh water droplets, moisture beads sparkling across the background for a fresh dewy feel, surrounded organically by delicate flowers including purple blossoms, pale lilies, yellow sprigs, and green leaves arranged diagonally around the center, balanced flat-lay composition, soft diffused studio lighting from above creating gentle highlights and natural shadows, shallow depth of field', thumbSrc: 'assets/img_073_ea3b6e344f37.png', desc: 'Dewy Pastel Pink & Floral Flat-Lay' },
+        { id: 'beauty-amber', ko: '시네마틱 사막 유목', en: 'perched on a curved piece of textured driftwood, framed by creamy white tropical flowers in full bloom and a single unopened bud arranged symmetrically along the wood for sculptural balance, slender vanilla pods resting in the foreground, set in a warm desert-toned studio environment with sweeping shadow patterns cast across a soft sand-colored backdrop, high-contrast cinematic lighting with a strong directional key light from the left producing deep shadow falloff and sharp rim lighting, rich color palette of golden ambers, warm caramel, soft ivory, and deep earthy browns, shallow depth of field with creamy bokeh', thumbSrc: 'assets/img_074_f7c9bb9b958a.png', desc: 'Cinematic Amber Desert & Driftwood' },
+        { id: 'beauty-archi', ko: '미니멀 건축 도면', en: 'placed in a minimal architectural interior with a textured plaster wall and a subtle concrete or stone floor surface, illuminated by natural sunlight from an angled side light creating soft but high-contrast shadows, warm and muted premium color grading, set against a warm neutral paper-like surface, design catalog aesthetic', thumbSrc: 'assets/img_075_a33d76d31db9.png', desc: 'Minimal Architectural Interior & Technical Layout' },
+        { id: 'beauty-wave', ko: '석양빛 해변 파도', en: 'placed diagonally on wet beach sand as a gentle ocean wave washes over it, delicate sea foam and tiny bubbles surrounding the base, fine sand texture visible beneath shallow clear water, high-detail water ripples and realistic foam patterns with natural reflections on the wet surface, warm golden-hour beach lighting casting natural highlights and soft shadows, cinematic top-down flat lay composition, fresh summer aesthetic', thumbSrc: 'assets/img_076_172cc0b21448.png', desc: 'Golden-Hour Wet Sand & Ocean Wave' },
+        { id: 'beauty-spa', ko: '연꽃 스파 수면', en: 'submerged in calm deep teal-green water with soft mist swirling across the surface, white lotus flowers and large green lily pads floating around, soft diffused natural lighting, moody and serene spa atmosphere, cinematic composition, shallow depth of field, calming editorial beauty aesthetic', thumbSrc: 'assets/img_077_c4938fbae654.png', desc: 'Serene Deep Teal Spa Water & Lotus' },
+      ]
+    },
+    {
+      id: 'filter', label: '프리셋', icon: 'auto_awesome',
+      eyebrow: 'PRESET', title: '어떤 스타일로 시작할까요?',
+      desc: '이미지 전체의 방향과 문장 뼈대를 먼저 고를 수 있습니다.',
+      options: [
+        { section: '영화적' },
+        { id: 'cinematic-wide', ko: '영화적 와이드 샷', en: 'a cinematic wide shot of {subject}, with dramatic lighting and strong spatial depth', enNoSubject: 'a cinematic wide shot, with dramatic lighting and strong spatial depth', icon: 'movie', thumbSrc: 'assets/img_078_9b7fab556f80.png', desc: '와이드샷 · 공간감 · 영화적' },
+        { id: 'cinematic-still', ko: '로우키 조명', en: 'a moody cinematic film still of {subject}, captured with low-key lighting', enNoSubject: 'a moody cinematic film still, captured with low-key lighting', icon: 'theaters', thumbSrc: 'assets/img_079_a75697ecc4a6.png', desc: '영화 스틸 · 로우키 · 무드' },
+        { id: 'cinematic-landscape', ko: '2.39:1 종횡비', en: 'an epic cinematic landscape of {subject}, in 2.39:1 aspect ratio', enNoSubject: 'an epic cinematic landscape, in 2.39:1 aspect ratio', icon: 'panorama', thumbSrc: 'assets/img_080_360d463fe56b.png', desc: '2.39:1 · 풍경 · 스케일' },
+        { id: 'cinematic-action', ko: '극적인 액션 순간', en: 'a dramatic action moment of {subject}, with motion blur and high contrast', enNoSubject: 'a dramatic action moment, with motion blur and high contrast', icon: 'motion_blur', thumbSrc: 'assets/img_081_4e85c584aee1.png', desc: '액션 · 모션블러 · 고대비' },
+        { id: 'cinematic-portrait', ko: '영화적 인물 사진', en: 'a cinematic portrait of {subject}, lit like a film scene with deep shadows', enNoSubject: 'a cinematic portrait, lit like a film scene with deep shadows', icon: 'portrait', thumbSrc: 'assets/img_082_f83a38be019a.png', desc: '인물 · 그림자 · 시네마틱' },
+
+        { section: '사실적' },
+        { id: 'real-scene', ko: '사실적인 텍스처', en: 'a highly detailed realistic scene of {subject}, captured in soft natural light with lifelike textures', enNoSubject: 'a highly detailed realistic scene, captured in soft natural light with lifelike textures', icon: 'texture', thumbSrc: 'assets/img_083_aeb05c9dc3a6.png', desc: '자연광 · 텍스처 · 사실적' },
+        { id: 'real-closeup', ko: '중앙 초점', en: 'a realistic close-up of {subject}, shot on a 50mm lens with shallow depth of field', enNoSubject: 'a realistic close-up, shot on a 50mm lens with shallow depth of field', icon: 'center_focus_strong', thumbSrc: 'assets/img_084_f772a62973e0.png', desc: '50mm · 클로즈업 · 얕은 심도' },
+        { id: 'real-outdoor', ko: '해질녘 풍경', en: 'a crisp realistic outdoor scene of {subject} at sunset', enNoSubject: 'a crisp realistic outdoor scene at sunset', icon: 'wb_twilight', thumbSrc: 'assets/img_085_7528bf3bd0ba.png', desc: '야외 · 해질녘 · 선명함' },
+        { id: 'real-product', ko: '제품 사진', en: 'a detailed product photograph of {subject}, on a clean minimal background', enNoSubject: 'a detailed product photograph, on a clean minimal background', icon: 'inventory_2', thumbSrc: 'assets/img_086_c256454bf021.png', desc: '제품 · 미니멀 · 상세' },
+        { id: 'real-env', ko: '그림자와 반사', en: 'a realistic environmental scene of {subject}, with natural shadows and reflections', enNoSubject: 'a realistic environmental scene, with natural shadows and reflections', icon: 'water_drop', thumbSrc: 'assets/img_087_7c2abc5fdee0.png', desc: '환경 · 반사 · 그림자' },
+
+        { section: '인물' },
+        { id: 'portrait-85', ko: '85mm 렌즈', en: 'a detailed portrait of {subject}, shot on an 85mm lens with soft studio lighting', enNoSubject: 'a detailed portrait, shot on an 85mm lens with soft studio lighting', icon: 'portrait', thumbSrc: 'assets/img_088_5b3712f00e32.png', desc: '85mm · 스튜디오 · 인물' },
+        { id: 'portrait-backlight', ko: '드라마틱한 인물 사진', en: 'a dramatic portrait of {subject}, shot with strong backlight and shallow depth of field', enNoSubject: 'a dramatic portrait, shot with strong backlight and shallow depth of field', icon: 'wb_iridescent', thumbSrc: 'assets/img_089_e5c8daf02787.png', desc: '후광 · 드라마틱 · 얕은 심도' },
+        { id: 'portrait-natural', ko: '자연스러운 인물 사진', en: 'a natural portrait of {subject}, photographed in natural outdoor light', enNoSubject: 'a natural portrait, photographed in natural outdoor light', icon: 'park', thumbSrc: 'assets/img_090_f0729faecc8c.png', desc: '자연광 · 야외 · 내추럴' },
+        { id: 'portrait-art', ko: '예술적인 인물 사진', en: 'an artistic portrait of {subject}, with stylized color grading', enNoSubject: 'an artistic portrait, with stylized color grading', icon: 'palette', thumbSrc: 'assets/img_091_e03c9dfb2c67.png', desc: '예술적 · 색보정 · 인물' },
+        { id: 'portrait-low', ko: '고대비 인물 사진', en: 'a high-contrast portrait of {subject}, shot from a low angle', enNoSubject: 'a high-contrast portrait, shot from a low angle', icon: 'expand_less', thumbSrc: 'assets/img_092_5e44ddb228e8.png', desc: '로우앵글 · 고대비 · 강한 인상' },
+
+        { section: '제품' },
+        { id: 'product-premium', ko: '프리미엄 제품 사진', en: 'a premium product photograph of {subject}, emphasizing shape and material on a clean studio background', enNoSubject: 'a premium product photograph, emphasizing shape and material on a clean studio background', icon: 'diamond', thumbSrc: 'assets/img_093_041654c7939c.png', desc: '프리미엄 · 재질 · 스튜디오' },
+        { id: 'product-macro', ko: '제품 클로즈업', en: 'an extreme macro product close-up of {subject}, highlighting surface texture and fine details', enNoSubject: 'an extreme macro product close-up, highlighting surface texture and fine details', icon: 'biotech', thumbSrc: 'assets/img_094_0cc0ab20c703.png', desc: '매크로 · 질감 · 디테일' },
+        { id: 'product-commercial', ko: '상업용 제품 이미지', en: 'a commercial product image of {subject}, shot with bright clean advertising lighting', enNoSubject: 'a commercial product image, shot with bright clean advertising lighting', icon: 'flash_on', thumbSrc: 'assets/img_095_f1cd262ce192.png', desc: '광고 · 밝은 조명 · 상업용' },
+
+        { section: '풍경' },
+        { id: 'land-epic', ko: '웅장한 풍경 사진', en: 'an epic landscape photograph of {subject}, with a vast sky and deep spatial depth', enNoSubject: 'an epic landscape photograph, with a vast sky and deep spatial depth', icon: 'landscape', thumbSrc: 'assets/img_080_360d463fe56b.png', desc: '넓은 하늘 · 웅장함 · 공간감' },
+        { id: 'land-golden', ko: '골든아워', en: 'an atmospheric outdoor landscape of {subject}, bathed in soft golden hour light', enNoSubject: 'an atmospheric outdoor landscape, bathed in soft golden hour light', icon: 'wb_twilight', thumbSrc: 'assets/img_096_b7c40d7103c4.png', desc: '골든아워 · 감성 · 야외' },
+        { id: 'land-minimal', ko: '미니멀한 풍경 사진', en: 'a minimal landscape photograph of {subject}, emphasizing negative space and silence', enNoSubject: 'a minimal landscape photograph, emphasizing negative space and silence', icon: 'crop_16_9', thumbSrc: 'assets/img_097_cbb58d2d501c.png', desc: '여백 · 고요함 · 미니멀' },
+
+        { section: '액션' },
+        { id: 'action-motion', ko: '결정적인 순간', en: 'a decisive moment of {subject}, captured with strong movement and motion blur', enNoSubject: 'a decisive moment, captured with strong movement and motion blur', icon: 'directions_run', thumbSrc: 'assets/img_098_d7567d940944.png', desc: '모션블러 · 결정적 순간 · 액션' },
+        { id: 'action-intense', ko: '긴박한 장면', en: 'an intense scene of {subject}, expressed with high contrast and dynamic composition', enNoSubject: 'an intense scene, expressed with high contrast and dynamic composition', icon: 'electric_bolt', thumbSrc: 'assets/img_099_a6bdcfd92389.png', desc: '긴박함 · 고대비 · 역동' },
+        { id: 'action-trailer', ko: '액션 시퀀스', en: 'a dramatic action sequence of {subject}, staged like a cinematic trailer', enNoSubject: 'a dramatic action sequence, staged like a cinematic trailer', icon: 'movie', thumbSrc: 'assets/img_081_4e85c584aee1.png', desc: '예고편 · 액션시퀀스 · 극적' }
+      ]
+    },
+    {
+      id: 'detail', label: '디테일', icon: 'texture',
+      eyebrow: 'FINISHING', title: '어떤 디테일을 더할까요?',
+      desc: '재질, 색감, 완성도를 보강하는 짧은 조건입니다.',
+      options: [
+        { id: 'texture', ko: '재질 강조', en: 'emphasized material texture', thumbSrc: 'assets/img_100_dc867c25fb9f.png', icon: 'texture', desc: '표면 질감과 재질을 선명하게' },
+        { id: 'skin', ko: '자연스러운 피부', en: 'natural skin texture, realistic skin', thumbSrc: 'assets/img_101_53f2ef4b75c9.png', icon: 'face', desc: '과보정 없는 자연스러운 피부 질감' },
+        { id: 'premium', ko: '프리미엄', en: 'premium commercial finish', thumbSrc: 'assets/img_102_2556e8006e2b.png', icon: 'diamond', desc: '광고 같은 고급 마무리' },
+        { id: 'reflection', ko: '반사', en: 'natural reflections', thumbSrc: 'assets/img_103_2a14314b2591.png', icon: 'water_drop', desc: '자연스러운 반사와 광택' },
+        { id: 'contrast', ko: '고대비', en: 'high contrast', thumbSrc: 'assets/img_104_5dc9c1bbc201.png', icon: 'contrast', desc: '선명하고 강한 인상' },
+        { id: 'cinematic-color', ko: '영화 색감', en: 'cinematic color grading', thumbSrc: 'assets/img_105_5112cd08352e.png', icon: 'movie_filter', desc: '영화 같은 색보정 톤' },
+        { id: 'minimal', ko: '미니멀', en: 'minimal composition', thumbSrc: 'assets/img_106_f52ea0942e65.png', icon: 'crop_square', desc: '군더더기 없는 정리된 화면' },
+        { id: 'sharp', ko: '선명함', en: 'crisp details, sharp focus', thumbSrc: 'assets/img_107_510c52965f4e.png', icon: 'filter_center_focus', desc: '디테일과 초점이 또렷한 느낌' }
+      ]
+    },
+    {
+      id: 'skinFinish', label: '피부 표현', icon: 'face_retouching_natural',
+      eyebrow: 'FINISHING', title: '어떤 피부 표현을 더할까요?',
+      desc: '피부결, 모공, 윤광, 눈썹처럼 인물 사진의 현실감과 K-뷰티 무드를 조절합니다.',
+      options: [
+        { id: "skin-texture", ko: "피부결", en: "hyper-realistic micro skin texture, high-fidelity skin pores detail", thumbSrc: "assets/img_108_a0ad3359d765.png", desc: "플라스틱 느낌을 지우고 렌즈에 바짝 밀착한 듯한 극사실적인 실제 피부 질감을 표현합니다." },
+        { id: "skin-pores", ko: "미세 모공", en: "visible but minimized skin pores, natural skin texture without blurring", thumbSrc: "assets/img_109_7e908b32b2f5.png", desc: "과도한 보정을 피하고 자연스럽고 미세한 모공 흔적을 살려 현실감을 더합니다." },
+        { id: "skin-vellus", ko: "얼굴 솜털", en: "fine vellus hair on cheeks, delicate facial peach fuzz catching the light", thumbSrc: "assets/img_110_76c99b797ecb.png", desc: "빛을 받았을 때 얼굴 외곽에 미세하게 빛나는 솜털 디테일로 실사 사진 같은 유수분을 만듭니다." },
+        { id: "skin-aegyosal", ko: "애교살", en: "defined natural aegyo-sal, soft under-eye volume, smiling eyes", thumbSrc: "assets/img_111_81d41c1b5a51.png", desc: "한국식 인물 표현의 핵심인 눈 밑 애교살의 부드러운 볼륨감을 자연스럽게 살려줍니다." },
+        { id: "skin-straight-brows", ko: "일자 눈썹", en: "soft straight Korean brows, neat and natural eyebrow texture", thumbSrc: "assets/img_112_f252c2e5bbfc.png", desc: "아치가 강한 서양식 눈썹 대신 세련되고 차분한 한국 스타일의 일자형 눈썹을 연출합니다." },
+        { id: "skin-chokchok", ko: "촉촉한 피부", en: "hydrated chok-chok skin texture, healthy moisture-rich K-beauty complexion", thumbSrc: "assets/img_113_fb3dc28c71c4.png", desc: "K-뷰티 특유의 수분을 가득 머금은 듯 촉촉하고 생기 있는 피부 베이스를 만듭니다." },
+        { id: "skin-glass", ko: "유리알 피부", en: "glass skin translucency, ultra-clear and flawless radiant complexion", thumbSrc: "assets/img_114_ca1dd37f9d40.png", desc: "잡티 없이 맑고 투명하게 빛나는 투명한 유리판 같은 피부감을 표현합니다." },
+        { id: "skin-honey-glow", ko: "꿀광/윤광", en: "subtle honey skin glow, radiant luminous skin from within", thumbSrc: "assets/img_115_a0156d256354.png", desc: "기름진 번들거림이 아니라 피부 속에서부터 은은하고 우아하게 차오르는 윤광을 만듭니다." },
+        { id: "skin-dewy-matte", ko: "물광/매트", en: "dewy skin finish, fresh moisture glaze, natural skin reflection", thumbSrc: "assets/img_116_a6cd0deca13a.png", desc: "방금 메이크업을 마친 듯 촉촉하게 반짝이는 물광 물기 질감을 연출합니다." },
+        { id: "skin-partial-matte", ko: "부분 매트", en: "strategic matte zones on T-zone and chin, realistic skin oil-water balance", thumbSrc: "assets/img_117_bd885157292b.png", desc: "이마와 턱은 매트하게 잡아주어 번들거림을 막고 완벽한 유수분 밸런스의 현실적 피부를 만듭니다." }
+      ]
+    },
+    {
+      id: 'film', label: '필름 효과', icon: 'movie',
+      eyebrow: 'FINISHING', title: '어떤 필름 효과를 더할까요?',
+      desc: '필름 특유의 빛 번짐과 입자감으로 아날로그 무드를 더하는 효과입니다.',
+      options: [
+        { id: 'halation', ko: '빛 번짐', en: 'halation, soft glow bleeding around highlights', thumbSrc: 'assets/img_118_9ee83f8d8480.png', icon: 'flare', desc: '강한 빛이 번져 몽환적이고 부드럽게' },
+        { id: 'bloom', ko: '하이라이트 퍼짐', en: 'bloom effect, glowing soft highlights', thumbSrc: 'assets/img_119_7176a03efac7.png', icon: 'blur_on', desc: '밝은 영역이 퍼져 꿈같은 분위기로' },
+        { id: 'lifted-blacks', ko: '검정 띄우기', en: 'lifted blacks, faded low-contrast shadows', thumbSrc: 'assets/img_120_75aeb9cbe811.png', icon: 'gradient', desc: '검정을 살짝 띄워 빈티지한 대비로' },
+        { id: 'chromatic', ko: '색수차', en: 'subtle chromatic aberration, color fringing', thumbSrc: 'assets/img_121_8dacb965e8cf.png', icon: 'colorize', desc: '색이 살짝 어긋나 필름 특유의 디테일로' },
+        { id: 'soft-diffusion', ko: '확산 필터', en: 'soft diffusion filter, dreamy light scatter', thumbSrc: 'assets/img_122_5fb4fce65236.png', icon: 'lens_blur', desc: '빛을 부드럽게 퍼뜨려 은은하게' },
+        { id: 'grain', ko: '필름 그레인', en: 'fine film grain, analog texture', thumbSrc: 'assets/img_123_ffc2d6393ca1.png', icon: 'grain', desc: '필름 입자로 아날로그 질감을' }
+      ]
+    },
+    {
+      id: 'technique', label: '필름 효과', icon: 'auto_fix_high',
+      eyebrow: 'FINISHING', title: '필름 효과를 더해볼까요?',
+      desc: '빛 번짐, 색수차, 그레인 같은 필름 기법을 선택합니다.',
+      options: [
+        { id: 'tech-halation', ko: '01 Halation (빛 번짐)', en: 'halation, soft glow bleeding around highlights', thumbSrc: 'assets/img_118_9ee83f8d8480.png', icon: 'flare', desc: '강한 빛이 번져 몽환적이고 부드러운 느낌 · # 빛 번짐, # 부드러움' },
+        { id: 'tech-bloom', ko: '02 Bloom (하이라이트 퍼짐)', en: 'bloom effect, glowing soft highlights', thumbSrc: 'assets/img_119_7176a03efac7.png', icon: 'blur_on', desc: '밝은 영역이 퍼져서 꿈같은 분위기 · # 하이라이트, # 꿈같은 효과' },
+        { id: 'tech-lifted-blacks', ko: '03 Lifted Blacks (검정 띄우기)', en: 'lifted blacks, faded low-contrast shadows', thumbSrc: 'assets/img_120_75aeb9cbe811.png', icon: 'gradient', desc: '검정을 완전한 검정이 아닌 살짝 회색으로 · # 빈티지 느낌, # 부드러운 대비' },
+        { id: 'tech-chromatic', ko: '04 Chromatic Aberration (색수차)', en: 'subtle chromatic aberration, color fringing', thumbSrc: 'assets/img_121_8dacb965e8cf.png', icon: 'colorize', desc: '렌즈 끝 부분의 색이 살짝 어긋나 필름 느낌 강화 · # 색 번짐, # 필름 특유의 디테일' },
+        { id: 'tech-soft-diffusion', ko: '05 Soft Diffusion (확산 필터 효과)', en: 'soft diffusion filter, dreamy light scatter', thumbSrc: 'assets/img_122_5fb4fce65236.png', icon: 'lens_blur', desc: '빛을 부드럽게 퍼뜨려 피부와 장면을 은은하게 · # 확산광 효과, # 로맨틱 무드' },
+        { id: 'tech-grain', ko: '06 Grain (필름 그레인)', en: 'fine film grain, analog texture', thumbSrc: 'assets/img_123_ffc2d6393ca1.png', icon: 'grain', desc: '필름 고유의 입자가 만들어내는 아날로그 질감 · # 그레인, # 아날로그 감성' }
+      ]
+    }
+  ];
+
+  singleIds = ['frame', 'angle', 'composition', 'lens', 'light', 'naturalLight', 'bg', 'bgProduct'];
+
+  persist() {
+    try {
+      localStorage.setItem('spb_v4_flow_help', JSON.stringify({
+        mode: this.state.mode,
+        subject: this.state.subject,
+        selections: this.state.selections,
+        active: this.state.active
+      }));
+    } catch (e) {}
+  }
+
+  getCat(id) { return this.data.find(c => c.id === id); }
+
+  selectCat(id) {
+    const visibleOrder = ['usage', 'frame', 'angle', 'composition', 'lens', 'light', 'naturalLight', 'bg', 'bgProduct', 'detail', 'skinFinish', 'film', 'filter'];
+    const next = id === 'technique' ? 'film' : id;
+    const safe = visibleOrder.indexOf(next) >= 0 ? next : 'usage';
+    this.setState({ active: safe, hover: null }, () => this.persist());
+  }
+
+  toggle(catId, optId) {
+    const cat = this.getCat(catId);
+    const opt = (cat.options || []).find(x => x.id === optId);
+    if (!opt || opt.section) return;
+
+    this.setState(s => {
+      const sel = { ...s.selections };
+      if (catId === 'bg' || catId === 'bgProduct') {
+        const arrNow = (sel[catId] || []).slice();
+        const already = arrNow.length === 1 && arrNow[0] === optId;
+        sel.bg = [];
+        sel.bgProduct = [];
+        if (!already) sel[catId] = [optId];
+        return { selections: sel };
+      }
+      const arr = (sel[catId] || []).slice();
+      const i = arr.indexOf(optId);
+      if (this.singleIds.indexOf(catId) >= 0) {
+        sel[catId] = (arr.length === 1 && arr[0] === optId) ? [] : [optId];
+      } else {
+        if (i >= 0) arr.splice(i, 1);
+        else arr.push(optId);
+        sel[catId] = arr;
+      }
+      return { selections: sel };
+    }, () => this.persist());
+  }
+
+  clearAll() { this.setState({ selections: {}, hover: null }, () => this.persist()); }
+
+  enter(o, e) {
+    if (!o || o.section) return;
+    this.setState({ hover: o.id });
+  }
+
+  leave() { this.setState({ hover: null }); }
+
+  showFloatingTooltipForTarget(el) {
+    if (!el || !el.getAttribute) return;
+    const text = el.getAttribute('data-tooltip') || '';
+    if (!text.trim()) return;
+    const rect = el.getBoundingClientRect();
+    const maxWidth = 260;
+    const margin = 12;
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    let x = rect.left + rect.width / 2;
+    x = Math.max(margin + maxWidth / 2, Math.min(vw - margin - maxWidth / 2, x));
+    let y = rect.top - 10;
+    let placement = 'top';
+    if (y < 42) {
+      y = rect.bottom + 10;
+      placement = 'bottom';
+    }
+    this.setState({ tooltip: { text, x, y, placement } });
+  }
+
+  hideFloatingTooltip() {
+    if (this.state.tooltip) this.setState({ tooltip: null });
+  }
+
+  componentDidMount() {
+    const valid = {};
+    let changed = false;
+    this.data.forEach(c => {
+      if (!c.options) return;
+      const cur = this.state.selections[c.id] || [];
+      const ids = cur.filter(id => c.options.some(o => o.id === id && !o.section));
+      if (ids.length) valid[c.id] = ids;
+      if (cur.length !== ids.length) changed = true;
+    });
+
+    const techniqueIds = valid.technique || [];
+    if (techniqueIds.length) {
+      const filmIds = new Set(valid.film || []);
+      techniqueIds.forEach(id => {
+        const migrated = id.replace(/^tech-/, '');
+        if (migrated) filmIds.add(migrated);
+      });
+      valid.film = Array.from(filmIds);
+      delete valid.technique;
+      changed = true;
+    }
+
+    const nextActive = this.state.active === 'technique' ? 'film' : this.state.active;
+    if (changed || nextActive !== this.state.active) this.setState({ selections: valid, active: nextActive }, () => this.persist());
+
+    this._tooltipOverHandler = (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.spb-tip[data-tooltip]') : null;
+      if (!target) return;
+      this.showFloatingTooltipForTarget(target);
+    };
+    this._tooltipOutHandler = (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.spb-tip[data-tooltip]') : null;
+      if (!target) return;
+      const related = e.relatedTarget;
+      if (related && target.contains && target.contains(related)) return;
+      this.hideFloatingTooltip();
+    };
+    this._tooltipFocusHandler = (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.spb-tip[data-tooltip]') : null;
+      if (!target) return;
+      this.showFloatingTooltipForTarget(target);
+    };
+    this._tooltipBlurHandler = () => this.hideFloatingTooltip();
+    this._tooltipClearHandler = () => this.hideFloatingTooltip();
+    document.addEventListener('mouseover', this._tooltipOverHandler, true);
+    document.addEventListener('mouseout', this._tooltipOutHandler, true);
+    document.addEventListener('focusin', this._tooltipFocusHandler, true);
+    document.addEventListener('focusout', this._tooltipBlurHandler, true);
+    window.addEventListener('scroll', this._tooltipClearHandler, true);
+    window.addEventListener('resize', this._tooltipClearHandler);
+
+    this._keyHandler = (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+      const editing = tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+      if (editing) return;
+
+      // Keyboard navigation must follow the visible menu flow, not the raw data array.
+      // This prevents hidden/legacy pages from appearing and keeps bg > finishing > preset.
+      const visibleOrder = ['usage', 'frame', 'angle', 'composition', 'lens', 'light', 'naturalLight', 'bg', 'bgProduct', 'detail', 'skinFinish', 'film', 'filter'];
+      const normalizeActive = (id) => id === 'technique' ? 'film' : id;
+      const current = normalizeActive(this.state.active);
+      const idx = Math.max(0, visibleOrder.indexOf(current));
+
+      const goPrev = e.key === '<' || e.key === 'ArrowLeft' || (e.code === 'Comma' && e.shiftKey) || (e.key === ',' && e.shiftKey);
+      const goNext = e.key === '>' || e.key === 'ArrowRight' || (e.code === 'Period' && e.shiftKey) || (e.key === '.' && e.shiftKey);
+      if (goPrev) { e.preventDefault(); this.selectCat(visibleOrder[(idx - 1 + visibleOrder.length) % visibleOrder.length]); }
+      if (goNext) { e.preventDefault(); this.selectCat(visibleOrder[(idx + 1) % visibleOrder.length]); }
+    };
+    window.addEventListener('keydown', this._keyHandler);
+  }
+
+  componentWillUnmount() {
+    if (this._keyHandler) window.removeEventListener('keydown', this._keyHandler);
+    if (this._tooltipOverHandler) document.removeEventListener('mouseover', this._tooltipOverHandler, true);
+    if (this._tooltipOutHandler) document.removeEventListener('mouseout', this._tooltipOutHandler, true);
+    if (this._tooltipFocusHandler) document.removeEventListener('focusin', this._tooltipFocusHandler, true);
+    if (this._tooltipBlurHandler) document.removeEventListener('focusout', this._tooltipBlurHandler, true);
+    if (this._tooltipClearHandler) window.removeEventListener('scroll', this._tooltipClearHandler, true);
+    if (this._tooltipClearHandler) window.removeEventListener('resize', this._tooltipClearHandler);
+  }
+
+  promptForOption(o) {
+    if (!o) return '';
+    const subject = (this.state.subject || '').trim();
+    if (o.enNoSubject) return subject ? o.en.replace('{subject}', subject) : o.enNoSubject;
+    return o.en || '';
+  }
+
+  buildPrompt() {
+    const parts = [];
+    const subject = (this.state.subject || '').trim();
+    const hasFilter = (this.state.selections.filter || []).length > 0;
+    if (subject && !hasFilter) parts.push(subject);
+    this.data.forEach(cat => {
+      (this.state.selections[cat.id] || []).forEach(oid => {
+        const o = (cat.options || []).find(x => x.id === oid);
+        if (!o || o.section) return;
+        parts.push(this.promptForOption(o));
+      });
+    });
+    return parts.filter(Boolean).join(', ');
+  }
+
+  copy() {
+    const txt = this.buildPrompt();
+    if (!txt) return;
+    const done = () => {
+      this.setState({ copied: true });
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState({ copied: false }), 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(done);
+    else done();
+  }
+
+  renderVals() {
+    const showEnglish = false;
+    const activeId = this.state.active;
+    const active = this.getCat(activeId) || this.getCat('usage') || this.data[0];
+    const totalCount = Object.values(this.state.selections).reduce((n, a) => n + (a ? a.length : 0), 0);
+    const tabTooltips = {
+      frame: '인물을 화면에 얼마나 크게 담을지 정해요.',
+      angle: '카메라가 바라보는 시점과 각도를 정해요.',
+      composition: '화면 안에서 피사체가 어떻게 배치될지 정해요.',
+      lens: '화각과 거리감, 배경 흐림 느낌을 정해요.',
+      light: '사진의 밝기, 그림자, 분위기를 정해요.',
+      bg: '인물이 놓일 공간과 장면 분위기를 정해요.',
+      filter: '문장 뼈대가 되는 프리셋 스타일을 먼저 정해요.',
+      film: '빛 번짐, 할레이션, 그레인 같은 필름 효과를 더해요.',
+      technique: '빛 번짐, 색수차, 그레인 같은 필름 기법을 더해요.',
+      detail: '질감, 피부, 콘트라스트 같은 디테일을 더해요.'
+    };
+    const presetEmphasisMap = {
+      'action-trailer': '액션 시퀀스'
+    };
+    const getPresetParts = (opt) => {
+      const label = (opt && opt.ko) || '';
+      const target = presetEmphasisMap[opt && opt.id] || '';
+      if (!label || !target) return { before: '', emphasis: '', after: label, hasEmphasis: false };
+      const idx = label.indexOf(target);
+      if (idx < 0) return { before: '', emphasis: '', after: label, hasEmphasis: false };
+      return { before: label.slice(0, idx), emphasis: target, after: label.slice(idx + target.length), hasEmphasis: true };
+    };
+
+    const optionTooltips = {
+      'cinematic-wide': '극적인 조명과 공간적 깊이감이 있는 영화적 와이드 샷',
+      'cinematic-still': '로우키 조명으로 포착된 분위기 있는 영화 스틸',
+      'cinematic-landscape': '2.39:1 종횡비로 담은 웅장한 영화적인 풍경',
+      'cinematic-action': '모션 블러와 높은 대비로 표현된 극적인 액션 순간',
+      'cinematic-portrait': '깊은 그림자로 영화 장면처럼 조명을 비춘 영화적 인물 사진',
+      'real-scene': '부드러운 자연광에서 실제와 같은 텍스처로 포착된 매우 세밀하고 사실적인 장면',
+      'real-closeup': '50mm 렌즈와 얕은 피사계 심도로 촬영된 사실적인 클로즈업',
+      'real-outdoor': '해질녘을 담은 선명하고 사실적인 야외 풍경',
+      'real-product': '깔끔하고 미니멀한 배경의 세부 제품 사진',
+      'real-env': '그림자와 반사가 자연스럽게 표현된 사실적인 환경 장면',
+      'portrait-85': '85mm 렌즈로 촬영한 부드러운 스튜디오 조명의 세밀한 인물 사진',
+      'portrait-backlight': '강한 후광과 얕은 피사계 심도로 촬영한 드라마틱한 인물 사진',
+      'portrait-natural': '자연스러운 야외 조명에서 촬영한 자연스러운 인물 사진',
+      'portrait-art': '스타일화된 색감 보정이 적용된 예술적인 인물 사진',
+      'portrait-low': '로우 앵글에서 촬영한 고대비 인물 사진',
+      'product-premium': '깔끔한 스튜디오 배경에서 형태와 재질을 강조한 프리미엄 제품 사진',
+      'product-macro': '매크로 렌즈로 표면 질감과 디테일을 극단적으로 확대한 제품 클로즈업',
+      'product-commercial': '밝고 깨끗한 광고 조명으로 촬영한 상업용 제품 이미지',
+      'land-epic': '넓은 하늘과 깊은 공간감 속에 담은 웅장한 풍경 사진',
+      'land-golden': '골든아워의 부드러운 빛으로 물든 감성적인 야외 풍경',
+      'land-minimal': '여백과 고요함을 강조한 미니멀한 풍경 사진',
+      'action-motion': '강한 움직임과 모션 블러로 포착된 결정적인 순간',
+      'action-intense': '높은 대비와 역동적인 구도로 표현된 긴박한 장면',
+      'action-trailer': '영화 예고편처럼 극적으로 연출한 액션 시퀀스',
+      eye: '눈높이에서 자연스럽고 편안하게 보여줘요.',
+      mcu: '얼굴과 상체를 중심으로 인물을 또렷하게 보여줘요.',
+      high: '위에서 내려다보는 시점으로 작고 약해 보일 수 있어요.',
+      low: '아래에서 올려다보는 시점으로 강하고 당당해 보여요.',
+      ots: '어깨 너머로 바라보는 구도로 대화 장면에 좋아요.',
+      pov: '내가 직접 바라보는 듯한 몰입감을 줘요.',
+      dutch: '화면을 비스듬히 기울여 긴장감이나 불안감을 만들어요.',
+      bird: '높은 곳에서 내려다보며 공간 전체를 보여줘요.',
+      worm: '아주 낮은 위치에서 올려다봐 웅장하게 보여줘요.',
+      est: '인물보다 배경과 상황을 넓게 보여줘요.',
+      l24: '넓은 배경과 공간감을 크게 담아요.',
+      l35: '인물과 배경을 자연스럽게 함께 보여줘요.',
+      l50: '실제 시선과 비슷한 자연스러운 느낌을 줘요.',
+      l70: '인물 중심으로 안정감 있게 담기 좋아요.',
+      l85: '배경을 부드럽게 흐리며 인물을 돋보이게 해요.',
+      l135: '멀리서 압축감 있게 담아 배경을 더 깊게 보여줘요.',
+      macro: '아주 가까운 디테일과 질감을 선명하게 보여줘요.',
+      natural: '햇빛처럼 자연스럽고 부드러운 분위기를 만들어요.',
+      soft: '그림자를 줄여 깨끗하고 편안한 인상을 줘요.',
+      cinematic: '영화처럼 명암이 깊고 분위기 있게 보여줘요.',
+      rim: '뒤쪽 빛으로 인물의 윤곽을 강조해요.',
+      lowkey: '어두운 그림자로 강렬하고 드라마틱하게 보여줘요.',
+      studio: '조명을 정돈해 깔끔하고 전문적인 느낌을 줘요.',
+      fill: '어두운 부분을 부드럽게 밝혀 균형을 맞춰요.',
+      volumetric: '빛줄기와 공기감을 살려 몽환적인 분위기를 만들어요.',
+      'studio-gallery': '깔끔한 전시 공간처럼 차분하고 세련되게 보여줘요.',
+      'studio-window': '창가의 빛과 구조감으로 우아한 분위기를 만들어요.',
+      'studio-concrete': '거친 벽과 강한 그림자로 감각적인 분위기를 줘요.',
+      'studio-warm': '부드러운 색감으로 패션 화보처럼 보여줘요.',
+      'comp-center': '피사체를 가운데 두어 안정감 있게 보여줘요.',
+      'comp-thirds': '화면을 3등분해 균형과 흐름을 만들어요.',
+      'comp-symmetry': '좌우 균형으로 정돈된 느낌을 줘요.',
+      'comp-leading': '선의 흐름으로 시선을 피사체로 이끌어요.',
+      'comp-frame': '창이나 구조물 안에 인물을 넣어 집중시켜요.',
+      'comp-frame-open': '열린 창문 프레임으로 인물을 강조해요.',
+      'comp-negative': '넓은 여백으로 피사체를 더 또렷하게 보여줘요.',
+      'comp-silhouette': '역광 윤곽으로 형태와 분위기를 강조해요.',
+      'comp-back': '뒤에서 보는 시점으로 여운과 방향감을 줘요.',
+      halation: '강한 빛이 번져 몽환적이고 부드러운 느낌을 줘요.',
+      bloom: '밝은 영역이 퍼져서 꿈같은 분위기를 만들어요.',
+      'lifted-blacks': '검정을 완전한 검정이 아닌 살짝 회색으로 띄워요.',
+      chromatic: '렌즈 끝 색이 살짝 어긋나 필름 느낌을 강화해요.',
+      'soft-diffusion': '빛을 부드럽게 퍼뜨려 피부와 장면을 은은하게 만들어요.',
+      grain: '필름 고유의 입자가 만들어내는 아날로그 질감을 더해요.',
+      'tech-halation': '강한 빛이 번져 몽환적이고 부드러운 느낌을 줘요.',
+      'tech-bloom': '밝은 영역이 퍼져서 꿈같은 분위기를 만들어요.',
+      'tech-lifted-blacks': '검정을 완전한 검정이 아닌 살짝 회색으로 띄워요.',
+      'tech-chromatic': '렌즈 끝 부분의 색이 살짝 어긋나 필름 느낌을 강화해요.',
+      'tech-soft-diffusion': '빛을 부드럽게 퍼뜨려 피부와 장면을 은은하게 만들어요.',
+      'tech-grain': '필름 고유의 입자가 만들어내는 아날로그 질감을 더해요.',
+      "skin-texture": "플라스틱 느낌을 지우고 렌즈에 바짝 밀착한 듯한 극사실적인 실제 피부 질감을 표현합니다.",
+      "skin-pores": "과도한 보정을 피하고 자연스럽고 미세한 모공 흔적을 살려 현실감을 더합니다.",
+      "skin-vellus": "빛을 받았을 때 얼굴 외곽에 미세하게 빛나는 솜털 디테일로 실사 사진 같은 유수분을 만듭니다.",
+      "skin-aegyosal": "한국식 인물 표현의 핵심인 눈 밑 애교살의 부드러운 볼륨감을 자연스럽게 살려줍니다.",
+      "skin-straight-brows": "아치가 강한 서양식 눈썹 대신 세련되고 차분한 한국 스타일의 일자형 눈썹을 연출합니다.",
+      "skin-chokchok": "K-뷰티 특유의 수분을 가득 머금은 듯 촉촉하고 생기 있는 피부 베이스를 만듭니다.",
+      "skin-glass": "잡티 없이 맑고 투명하게 빛나는 투명한 유리판 같은 피부감을 표현합니다.",
+      "skin-honey-glow": "기름진 번들거림이 아니라 피부 속에서부터 은은하고 우아하게 차오르는 윤광을 만듭니다.",
+      "skin-dewy-matte": "방금 메이크업을 마친 듯 촉촉하게 반짝이는 물광 물기 질감을 연출합니다.",
+      "skin-partial-matte": "이마와 턱은 매트하게 잡아주어 번들거림을 막고 완벽한 유수분 밸런스의 현실적 피부를 만듭니다.",
+      "nl-golden-hour": "일출·일몰 직전의 따뜻하고 로맨틱한 황금빛과 주황색 톤을 연출합니다.",
+      "nl-blue-hour": "해질녘 직후의 차분하고 푸른빛이 감도는 몽환적이고 정적인 무드를 만듭니다.",
+      "nl-midday": "한낮의 강렬한 햇빛으로 대비가 강하고 깊고 선명한 그림자를 표현합니다.",
+      "nl-overcast": "구름에 가려진 부드러운 빛으로 그림자 없이 차분하고 은은한 분위기를 만듭니다.",
+      "nl-window-side": "창문으로 들어오는 빛을 이용해 인물의 입체감과 드라마틱한 분위기를 극대화합니다.",
+      "nl-dappled": "숲속 나뭇잎 사이로 햇살이 통과하며 생기는 싱그럽고 얼룩덜룩한 빛 패턴을 만듭니다."
+    };
+
+    const tabBase = "position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 10px 17px; border-radius: 999px; font-size: 14.5px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all .15s ease; font-family: 'Noto Sans KR',sans-serif;";
+    const subTabBase = "display:inline-flex; align-items:center; gap:6px; padding:8px 13px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; white-space:nowrap; transition:all .15s ease; border:1px solid #e5e7eb; font-family:'Noto Sans KR',sans-serif;";
+    const topCounts = {
+      usage: 0,
+      shooting: (this.state.selections.frame || []).length + (this.state.selections.angle || []).length + (this.state.selections.composition || []).length + (this.state.selections.lens || []).length,
+      light: (this.state.selections.light || []).length + (this.state.selections.naturalLight || []).length,
+      bg: (this.state.selections.bg || []).length + (this.state.selections.bgProduct || []).length,
+      finishing: (this.state.selections.detail || []).length + (this.state.selections.skinFinish || []).length + (this.state.selections.film || []).length,
+      filter: (this.state.selections.filter || []).length
+    };
+    const getMainId = (id) => {
+      if (id === 'usage') return 'usage';
+      if (id === 'frame' || id === 'angle' || id === 'composition' || id === 'lens') return 'shooting';
+      if (id === 'naturalLight') return 'light';
+      if (id === 'bgProduct') return 'bg';
+      if (id === 'detail' || id === 'skinFinish' || id === 'film' || id === 'technique') return 'finishing';
+      return id;
+    };
+    const mainActiveId = getMainId(activeId);
+    const topTabs = [
+      { id: 'usage', label: '사용법', icon: 'help', tooltip: '이 도구를 어떻게 쓰는지 먼저 확인해요.', target: 'usage' },
+      { id: 'shooting', label: '촬영', icon: 'videocam', tooltip: '샷 크기, 시점, 구도, 렌즈 중 필요한 것만 고르세요.', target: 'frame' },
+      { id: 'light', label: '조명', icon: 'wb_sunny', tooltip: '필요할 때만 빛의 방향과 분위기를 추가하세요.', target: 'light' },
+      { id: 'bg', label: '배경', icon: 'landscape', tooltip: '필요할 때만 공간과 무드를 추가하세요.', target: 'bg' },
+      { id: 'finishing', label: '마무리', icon: 'auto_awesome', tooltip: '디테일과 필름 효과 중 필요한 것만 더하세요.', target: 'detail' },
+      { id: 'filter', label: '프리셋', icon: 'tune', tooltip: '원할 때만 문장 뼈대가 되는 프리셋을 고르세요.', target: 'filter' }
+    ];
+    const tabs = topTabs.map(tab => {
+      const isActive = tab.id === mainActiveId;
+      const count = topCounts[tab.id] || 0;
+      const style = isActive
+        ? tabBase + "background: #2054dc; color: #ffffff; border: 1px solid #2054dc; box-shadow: 0 4px 12px rgba(32,84,220,0.28);"
+        : tabBase + "background: #ffffff; color: #4b5563; border: 1px solid #e5e7eb;";
+      return {
+        id: tab.id,
+        label: tab.label,
+        icon: tab.icon,
+        tooltip: tab.tooltip,
+        style,
+        hasCount: count > 0,
+        count,
+        countStyle: "min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; background: " + (isActive ? "rgba(255,255,255,0.25)" : "#dcecf8") + "; color: " + (isActive ? "#ffffff" : "#2054dc") + ";",
+        onSelect: () => this.selectCat(tab.target)
+      };
+    });
+    const subTabDefs = mainActiveId === 'shooting'
+      ? [
+          { id: 'frame', label: '샷 크기' },
+          { id: 'angle', label: '시점' },
+          { id: 'composition', label: '구도' },
+          { id: 'lens', label: '렌즈' }
+        ]
+      : mainActiveId === 'light'
+        ? [
+            { id: 'light', label: '라이팅' },
+            { id: 'naturalLight', label: '자연광' }
+          ]
+        : mainActiveId === 'bg'
+          ? [
+              { id: 'bg', label: '인물' },
+              { id: 'bgProduct', label: '제품' }
+            ]
+          : mainActiveId === 'finishing'
+            ? [
+                { id: 'detail', label: '디테일' },
+                { id: 'skinFinish', label: '피부 표현' },
+                { id: 'film', label: '필름 효과' }
+              ]
+            : [];
+    const subTabs = subTabDefs.map(tab => {
+      const count = (this.state.selections[tab.id] || []).length;
+      const isActive = tab.id === activeId;
+      const fixedWidth = mainActiveId === 'shooting' ? '96px' : (mainActiveId === 'light' || mainActiveId === 'bg') ? '112px' : mainActiveId === 'finishing' ? '118px' : 'auto';
+      return {
+        id: tab.id,
+        label: tab.label,
+        hasCount: count > 0,
+        count,
+        flowClass: 'spb-flow-step' + (isActive ? ' is-active' : '') + (count > 0 ? ' has-count' : '') + (subTabDefs.indexOf(tab) === 0 ? ' is-first' : '') + (subTabDefs.indexOf(tab) === subTabDefs.length - 1 ? ' is-last' : ''),
+        inlineStyle: '--tab-fixed-width:' + fixedWidth + ';',
+        countStyle: "",
+        style: "",
+        onSelect: () => this.selectCat(tab.id)
+      };
+    });
+
+    const buildSubFlow = () => {
+      const labels = subTabs.map(t => t.label);
+      const activeIndex = Math.max(0, subTabDefs.findIndex(tab => tab.id === activeId));
+      const H = 44;
+      const D = 18;
+      const R = 15;
+      const STROKE = 1.35;
+      const M = STROKE + 1;
+      const top = M;
+      const bot = H - M;
+      const mid = H / 2;
+      const n = labels.length;
+      const bx = [M];
+
+      labels.forEach((label, i) => {
+        const cleanLen = String(label || '').replace(/\s/g, '').length;
+        const base = cleanLen * 15 + 72 + D + (i === 0 ? R : 0);
+        const minW = mainActiveId === 'shooting' ? 126 : mainActiveId === 'finishing' ? 136 : 126;
+        const maxW = mainActiveId === 'finishing' ? 154 : 144;
+        const w = Math.max(minW, Math.min(maxW, base));
+        bx.push(bx[bx.length - 1] + w);
+      });
+
+      const fillPath = (i) => {
+        if (i === 0) {
+          return `M ${bx[0] + R} ${top} H ${bx[1] - D} L ${bx[1]} ${mid} L ${bx[1] - D} ${bot}` +
+            ` H ${bx[0] + R} Q ${bx[0]} ${bot} ${bx[0]} ${bot - R}` +
+            ` L ${bx[0]} ${top + R} Q ${bx[0]} ${top} ${bx[0] + R} ${top} Z`;
+        }
+        return `M ${bx[i] - D} ${top} H ${bx[i + 1] - D} L ${bx[i + 1]} ${mid} L ${bx[i + 1] - D} ${bot}` +
+          ` H ${bx[i] - D} L ${bx[i]} ${mid} Z`;
+      };
+
+      const silhouette =
+        `M ${bx[0] + R} ${top} H ${bx[n] - D} L ${bx[n]} ${mid} L ${bx[n] - D} ${bot}` +
+        ` H ${bx[0] + R} Q ${bx[0]} ${bot} ${bx[0]} ${bot - R}` +
+        ` L ${bx[0]} ${top + R} Q ${bx[0]} ${top} ${bx[0] + R} ${top} Z`;
+
+      const dividers = [];
+      for (let i = 1; i < n; i += 1) {
+        dividers.push({ d: `M ${bx[i] - D} ${top} L ${bx[i]} ${mid} L ${bx[i] - D} ${bot}` });
+      }
+
+      const labelsOut = subTabs.map((tab, i) => {
+        const label = tab.label;
+        const isActive = i === activeIndex;
+        const approxTextW = String(label || '').replace(/\s/g, '').length * 14;
+        const x = (bx[i] + bx[i + 1]) / 2 - D / 2 + (i === 0 ? R / 2 : 0);
+        const countX = x + approxTextW / 2 + 15;
+        return {
+          label,
+          x,
+          y: mid + 0.5,
+          weight: isActive ? '800' : '700',
+          fill: isActive ? '#ffffff' : '#64748b',
+          hasCount: tab.hasCount,
+          count: tab.count,
+          countCx: countX,
+          countCy: mid,
+          countTextY: mid + 0.5,
+          countBg: isActive ? 'rgba(255,255,255,0.26)' : '#e8eefc',
+          countFill: isActive ? '#ffffff' : '#2054dc',
+          hitX: bx[i],
+          hitW: bx[i + 1] - bx[i],
+          btnClass: 'spb-submenu-svg-button' + (isActive ? ' is-active' : ''),
+          btnStyle: `left:${bx[i]}px; top:0px; width:${bx[i + 1] - bx[i]}px; height:${H}px;`,
+          onSelect: tab.onSelect
+        };
+      });
+
+      return {
+        H,
+        totalW: bx[n] + M,
+        viewBox: `0 0 ${bx[n] + M} ${H}`,
+        labelLayerStyle: `width:${bx[n] + M}px; height:${H}px;`,
+        silhouette,
+        activePath: n ? fillPath(activeIndex) : '',
+        dividers,
+        stroke: STROKE,
+        fontSize: 14,
+        countR: 8.5,
+        countFontSize: 10,
+        outline: '#d7deea',
+        activeOutline: '#d7deea',
+        activeFill: '#62a4df',
+        inactiveFill: '#ffffff',
+        labels: labelsOut
+      };
+    };
+    const subFlow = buildSubFlow();
+
+    const flowWrapClass = subTabDefs.length ? 'spb-flow-wrap is-tail-arrow' : 'spb-flow-wrap';
+
+    const selArr = this.state.selections[activeId] || [];
+    const compact = !!active.compact;
+    const cardBase = "position: relative; text-align: left; width: 100%; padding: " + (compact ? "12px 13px" : "18px") + "; border-radius: " + (compact ? "13px" : "16px") + "; cursor: pointer; transition: all .12s ease; display: block; box-shadow: 0 1px 2px rgba(17,24,39,0.04);";
+    let gridStyle = compact ? "display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;" : "display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;";
+    if (activeId === 'usage') gridStyle = "display:none;";
+    if (activeId === 'frame') gridStyle = "display:none;";
+    if (activeId === 'angle') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); column-gap: 18px; row-gap: 22px; align-items:start;";
+    if (activeId === 'composition') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'lens') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'light') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'naturalLight') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'bg' || activeId === 'bgProduct') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'detail') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'skinFinish') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'film') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+    if (activeId === 'filter') gridStyle = "display:grid; grid-template-columns: repeat(5, minmax(0, 170px)); column-gap: 22px; row-gap: 28px; align-items:start; justify-content:start;";
+
+    const displayOptions = activeId === 'film' ? (this.getCat('film').options || []) : (active.options || []);
+
+    const options = displayOptions.map(o => {
+      if (o.section) {
+        return {
+          isSection: true,
+          isOption: false,
+          sectionLabel: o.section,
+          sectionStyle: (activeId === 'filter' ? "grid-column: 1 / -1; margin-top: 10px; padding: 14px 4px 8px; border-top: 1px solid #e5e7eb; font-size: 13px; font-weight: 800; letter-spacing: 0.04em; color: #9ca3af; text-transform: uppercase;" : "grid-column: 1 / -1; margin-top: 12px; padding: 14px 4px 8px; border-top: 1px solid #e5e7eb; font-size: 13px; font-weight: 800; letter-spacing: 0.04em; color: #9ca3af; text-transform: uppercase;")
+        };
+      }
+      const sourceCatId = activeId === 'film' ? 'film' : activeId;
+      const sourceSelArr = this.state.selections[sourceCatId] || [];
+      const sel = sourceSelArr.indexOf(o.id) >= 0;
+      const isAngleVisual = activeId === 'angle' && !!o.thumbSrc;
+      const isCompositionVisual = activeId === 'composition' && !!o.thumbSrc;
+      const isLensVisual = activeId === 'lens' && !!o.thumbSrc;
+      const isLightVisual = activeId === 'light' && !!o.thumbSrc;
+      const isNaturalLightVisual = activeId === 'naturalLight' && !!o.thumbSrc;
+      const isBgVisual = (activeId === 'bg' || activeId === 'bgProduct') && !!o.thumbSrc;
+      const isSkinVisual = activeId === 'skinFinish' && !!o.thumbSrc;
+      const isFilmVisual = activeId === 'film' && !!o.thumbSrc;
+      const isDetailVisual = activeId === 'detail' && !!o.thumbSrc;
+      const isPresetVisual = activeId === 'filter' && !!o.thumbSrc;
+      const isPresetList = activeId === 'filter' && !o.thumbSrc;
+      const presetParts = getPresetParts(o);
+      const isVisualThumb = isAngleVisual || isCompositionVisual || isLensVisual || isLightVisual || isNaturalLightVisual || isBgVisual || isSkinVisual || isFilmVisual || isDetailVisual || isPresetVisual;
+      const checkInline = "width: 24px; height: 24px; border-radius: 999px; display: " + (sel ? "inline-flex" : "none") + "; align-items: center; justify-content: center; background: #2054dc;";
+      const checkAbs = "position: absolute; top: 9px; right: 9px; width: 20px; height: 20px; border-radius: 999px; display: " + (sel ? "inline-flex" : "none") + "; align-items: center; justify-content: center; background: #2054dc;";
+      return {
+        isSection: false,
+        isOption: true,
+        isPresetList: isPresetList,
+        isRegularOption: !isPresetList,
+        hasPresetEmphasis: !!presetParts.hasEmphasis,
+        hasPlainKo: !presetParts.hasEmphasis,
+        presetBefore: presetParts.before,
+        presetEmphasis: presetParts.emphasis,
+        presetAfter: presetParts.after,
+        id: o.id, ko: o.ko, en: this.promptForOption(o), desc: o.desc, icon: o.icon, thumbSrc: o.thumbSrc || '', tooltip: (activeId === 'filter' ? (optionTooltips[o.id] || o.ko) : (optionTooltips[o.id] || '')), cardClass: isVisualThumb ? 'spb-mobile-thumb-option' : '', koClass: isVisualThumb ? 'spb-mobile-thumb-label' : '',
+        compact: compact, showIcon: (!compact && !isVisualThumb) || isPresetList, showThumb: isVisualThumb,
+        iconColor: sel ? '#2054dc' : '#9ca3af',
+        cardStyle: isPresetList
+          ? ("position: relative; width:100%; padding:20px 24px; border-radius:28px; cursor:pointer; transition: all .15s ease; display:block; text-align:left; background:" + (sel ? "#f3f8ff; border:2px solid #2054dc;" : "#ffffff; border:1px solid #e5e7eb;") + " box-shadow:0 1px 2px rgba(17,24,39,0.04);")
+          : (isVisualThumb
+            ? "position: relative; text-align:center; width:100%; padding:0; border:none; background: transparent; box-shadow:none; cursor:pointer; transition: all .15s ease; display:block;"
+            : cardBase + (sel ? "border: 2px solid #2054dc; background: #f3f8ff;" : "border: 1px solid #e5e7eb; background: #ffffff;")),
+        thumbWrapStyle: isVisualThumb
+          ? "display:flex; align-items:center; justify-content:center; width:100%; max-width:160px; aspect-ratio:1 / 1; height:auto; min-width:0; margin:0 auto; position:relative; border-radius:999px; overflow:hidden; background:transparent; transition: all .15s ease;"
+          : "display:none;",
+        thumbImgStyle: isVisualThumb ? "display:block; width:100%; height:100%; max-width:100%; object-fit:contain; margin:0 auto; border-radius:999px; filter:none; image-rendering:auto;" : "display:none;",
+        thumbOverlayStyle: isVisualThumb ? (sel ? "position:absolute; inset:0; border-radius:999px; background: rgba(239,59,45,0.24); box-shadow: inset 0 0 0 3px #ef3b2d; pointer-events:none;" : "display:none;") : "display:none;",
+        checkStyle: isPresetList ? checkInline : (isVisualThumb ? "display:none;" : (compact ? checkAbs : checkInline)),
+        koStyle: isPresetList
+          ? "font-family: 'Plus Jakarta Sans','Noto Sans KR',sans-serif; font-weight: 500; color: #374151; line-height: 1.55; letter-spacing: -0.02em; font-size: 15px; margin: 0;"
+          : (isVisualThumb
+            ? "font-family: 'Plus Jakarta Sans','Noto Sans KR',sans-serif; font-weight: 800; color: #111827; line-height: 1.2; margin-top: 8px; text-align:center; letter-spacing:-0.035em; font-size: 17px;"
+            : ("font-family: 'Plus Jakarta Sans','Noto Sans KR',sans-serif; font-weight: 700; color: #111827; " + (compact ? "font-size: 14px; padding-right: 18px;" : "font-size: 17px; margin-top: 12px;"))),
+        enStyle: "display:none;",
+        descStyle: (isPresetList || isVisualThumb) ? "display:none;" : ("color: #6b7280; line-height: 1.5; " + (compact ? "font-size: 11.5px; margin-top: 5px;" : "font-size: 13px; margin-top: 7px;")),
+        onToggle: () => this.toggle(sourceCatId, o.id),
+        onEnter: (e) => this.enter(o, e),
+        onLeave: () => this.leave()
+      };
+    });
+
+    const frameCat = this.getCat('frame');
+    const frameSelected = (this.state.selections.frame || [])[0] || '';
+    const frameHover = this.state.hover;
+    const currentFrame = frameHover ? ((frameCat.options || []).find(o => o.id === frameHover) || null) : null;
+    const frameOptions = frameCat.options || [];
+
+    const frameHighlightItems = frameOptions.map(o => {
+      const isHover = frameHover === o.id;
+      const isSelected = frameSelected === o.id;
+      const activeRed = isHover;
+      const overlayStyle = `display:${activeRed ? 'block' : 'none'}; position:absolute; left:${o.x}%; top:${o.y}%; width:${o.w}%; height:${o.h}%; border:2px solid #ef3b2d; background:rgba(239,59,45,0.07); border-radius:2px; pointer-events:none; z-index:3;`;
+      return { overlayStyle };
+    });
+
+    const frameHotspots = [];
+    const addHotspot = (o, x, y, w, h) => {
+      if (w <= 0.15 || h <= 0.15) return;
+      frameHotspots.push({
+        style: `position:absolute; left:${x}%; top:${y}%; width:${w}%; height:${h}%; border:0; padding:0; background:rgba(255,255,255,0.001); cursor:pointer; z-index:6;`,
+        onToggle: () => this.toggle('frame', o.id),
+        onEnter: () => this.enter(o),
+        onLeave: () => this.leave()
+      });
+    };
+    frameOptions.forEach((o, idx) => {
+      const inner = idx > 0 ? frameOptions[idx - 1] : null;
+      if (!inner) { addHotspot(o, o.x, o.y, o.w, o.h); return; }
+      const ix = inner.x, iy = inner.y, iw = inner.w, ih = inner.h;
+      addHotspot(o, o.x, o.y, o.w, iy - o.y);
+      addHotspot(o, o.x, iy + ih, o.w, (o.y + o.h) - (iy + ih));
+      addHotspot(o, o.x, iy, ix - o.x, ih);
+      addHotspot(o, ix + iw, iy, (o.x + o.w) - (ix + iw), ih);
+    });
+
+    const frameNumberItems = frameOptions.map(o => {
+      const isHover = frameHover === o.id;
+      const activeRed = isHover;
+      // The blue number circles are already baked into the base image.
+      // Use the exact same source-image circle size and source-image center coordinates.
+      const circleW = 3.125000; // exact same source-space size as the baked blue number badge
+      const circleH = 4.185742; // exact same source-space size as the baked blue number badge
+      const fontSize = 19;
+      const hitStyle = `position:absolute; left:${o.ax}%; top:${o.ay}%; transform:translate(-50%, -50%); width:${circleW}%; height:${circleH}%; padding:0; border:none; background:transparent; cursor:pointer; z-index:8; display:flex; align-items:center; justify-content:center;`;
+      const badgeStyle = `width:100%; height:100%; min-width:100%; min-height:100%; border-radius:999px; background:#ef3b2d; color:#ffffff; display:${activeRed ? 'flex' : 'none'}; align-items:center; justify-content:center; font-family:'Satoshi',sans-serif; font-size:${fontSize}px; line-height:1; font-weight:900; box-shadow:none; border:none; flex:0 0 auto;`;
+      return { number: String(o.number), hitStyle, badgeStyle, onToggle: () => this.toggle('frame', o.id), onEnter: () => this.enter(o), onLeave: () => this.leave() };
+    });
+
+    const hv = this.state.hover;
+    const tipStyle = "display: none;";
+    const floatingTooltip = this.state.tooltip || null;
+    const floatingTooltipStyle = floatingTooltip
+      ? ("position:fixed; left:" + floatingTooltip.x + "px; top:" + floatingTooltip.y + "px; transform:" + (floatingTooltip.placement === 'bottom' ? "translate(-50%, 0)" : "translate(-50%, -100%)") + "; z-index:2147483647; max-width:260px; width:max-content; padding:8px 10px; border-radius:8px; background:rgba(17,24,39,0.96); color:#ffffff; box-shadow:0 8px 20px rgba(17,24,39,0.2); font-family:'Noto Sans KR',sans-serif; font-size:12px; font-weight:600; line-height:1.45; letter-spacing:-0.01em; text-align:center; white-space:normal; pointer-events:none; box-sizing:border-box;")
+      : "display:none;";
+
+    const groups = [];
+    this.data.forEach(cat => {
+      const ids = this.state.selections[cat.id] || [];
+      if (!ids.length) return;
+      groups.push({
+        catId: cat.id, label: cat.label, icon: cat.icon,
+        items: ids.map(id => {
+          const o = (cat.options || []).find(x => x.id === id) || { ko: id };
+          return { id, ko: o.ko, onRemove: () => this.toggle(cat.id, id) };
+        })
+      });
+    });
+
+    const usageSteps = [
+      {
+        num: '1',
+        title: '프롬프트 마트입니다',
+        textBefore: '필요한 부분만 담고, 필요하지 않은 메뉴는 스킵하세요.',
+        hasEmphasis: false,
+        emphasis: '',
+        textMiddle: '',
+        hasEmphasis2: false,
+        emphasis2: '',
+        textAfter: '',
+        hasExample: false,
+        example: '',
+        hasCode: false,
+        code: '',
+        hasResult: false,
+        result: '',
+        hasSampleImg: false,
+        sampleImg: ''
+      },
+      {
+        num: '2',
+        title: '선택하면 자동으로 장바구니에 담겨요.',
+        textBefore: '모두 담았다면 복사하기를 클릭해요.',
+        hasEmphasis: false,
+        emphasis: '',
+        textMiddle: '',
+        hasEmphasis2: false,
+        emphasis2: '',
+        textAfter: '',
+        hasExample: false,
+        example: '',
+        hasCode: false,
+        code: '',
+        hasResult: false,
+        result: '',
+        hasSampleImg: false,
+        sampleImg: ''
+      },
+      {
+        num: '3',
+        title: '오른쪽 주제/대상 입력창에 만들고 싶은 아이템을 작성합니다.',
+        textBefore: '',
+        hasEmphasis: false,
+        emphasis: '',
+        textMiddle: '',
+        hasEmphasis2: false,
+        emphasis2: '',
+        textAfter: '',
+        hasExample: true,
+        example: '예) K-POP 아이돌 스타일의 모델',
+        hasCode: false,
+        code: '',
+        hasResult: false,
+        result: '',
+        hasSampleImg: false,
+        sampleImg: ''
+      },
+      {
+        num: '4',
+        title: '복사한 프롬프트를 붙여 넣으세요',
+        textBefore: '',
+        hasEmphasis: false,
+        emphasis: '',
+        textMiddle: '',
+        hasEmphasis2: false,
+        emphasis2: '',
+        textAfter: '',
+        hasExample: false,
+        example: '',
+        hasCode: true,
+        code: 'K-POP 아이돌 스타일의 모델, medium-full shot, framed from mid-thigh up to the top of the head, full torso and upper legs visible, generous headroom, eye-level camera....',
+        hasResult: false,
+        result: '',
+        hasSampleImg: false,
+        sampleImg: ''
+      },
+      {
+        num: '5',
+        title: '선택한 효과가 적용됩니다',
+        textBefore: '예를 들어 카우보이 샷, 아이 레벨, 시네마틱 라이팅, 빛 번짐, 색수차를 고르면 해당 효과가 적용됩니다.',
+        hasEmphasis: false,
+        emphasis: '',
+        textMiddle: '',
+        hasEmphasis2: false,
+        emphasis2: '',
+        textAfter: '',
+        hasExample: false,
+        example: '',
+        hasCode: false,
+        code: '',
+        hasResult: true,
+        result: '효과가 적용된 K-POP 아이돌 스타일의 모델 사진 완성!',
+        hasSampleImg: true,
+        sampleImg: 'assets/img_124_1ec6de6a3b2a.png'
+      }
+    ];
+
+    const prompt = this.buildPrompt();
+    const wc = prompt ? (prompt.split(',').filter(s => s.trim()).length + '개 요소') : '';
+    const copyOk = !!prompt;
+    const copyBtnStyle = "margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 13px; border-radius: 12px; border: none; font-family: 'Noto Sans KR',sans-serif; font-size: 14.5px; font-weight: 700; transition: all .15s; " + (copyOk ? "background: linear-gradient(to right, #2f9cf3, #2054dc); color: #ffffff; cursor: pointer;" : "background: #243049; color: #5f7299; cursor: not-allowed;");
+
+    return {
+      showEnglish,
+      imageTabStyle: this.segStyle(this.state.mode === 'image'),
+      videoTabStyle: this.segStyle(this.state.mode === 'video'),
+      onImage: () => this.setState({ mode: 'image' }, () => this.persist()),
+      onVideo: () => this.setState({ mode: 'video' }, () => this.persist()),
+      active: {
+        eyebrow: active.eyebrow,
+        title: active.title,
+        desc: active.desc,
+        descStyle: active.desc
+          ? "font-size: 15px; line-height: 1.7; color: #4b5563; margin: 0 0 13px; max-width: 620px; min-height: 26px; display:block;"
+          : "display:none;"
+      },
+      tabs,
+      subTabs,
+      subFlow,
+      flowWrapClass,
+      hasSubTabs: subTabs.length > 0,
+      showUsageGuide: activeId === 'usage',
+      usageSteps,
+      optionGridClass: ['angle','composition','lens','light','naturalLight','bg','detail','skinFinish','film','filter'].indexOf(activeId) >= 0 ? 'spb-option-grid spb-mobile-thumb-grid' : 'spb-option-grid',
+      options, gridStyle,
+      hasTip: false, tipStyle, tipSrc: '', tipKo: '', hasFloatingTooltip: !!floatingTooltip, floatingTooltipStyle, floatingTooltipText: floatingTooltip ? floatingTooltip.text : '',
+      showFramePreview: activeId === 'frame',
+      frameBaseSrc: this.frameBase,
+      framePreviewStageStyle: 'position: relative; width: min(100%, 760px); height: 0; padding-bottom: min(74.66%, 567px); overflow: visible; border-radius: 0; background: #ffffff; border: none;',
+      frameHighlightItems,
+      frameHotspots,
+      frameNumberItems,
+      hasFrameInfo: !!frameHover && !!currentFrame,
+      frameInfoTitle: currentFrame ? currentFrame.ko : '',
+      frameInfoEn: currentFrame ? ((currentFrame.en || '').split(',')[0]) : '',
+      frameInfoDesc: currentFrame ? currentFrame.desc : '',
+      frameInfoNumber: currentFrame ? String(currentFrame.number) : '',
+      frameInfoCardStyle: 'position:absolute; right: 8px; top: 12px; width: 260px; padding: 13px 17px 13px; border-radius: 16px; background: #2054dc; box-shadow: none; z-index: 30;',
+      frameInfoTailStyle: 'position:absolute; left:50%; bottom:-10px; transform:translateX(-50%); width:0; height:0; border-left:10px solid transparent; border-right:10px solid transparent; border-top:10px solid #2054dc;',
+      groups,
+      hasSelections: groups.length > 0,
+      isEmpty: groups.length === 0,
+      countLabel: totalCount > 0 ? (totalCount + '개의 요소가 담겨 있어요') : '아직 선택한 항목이 없습니다',
+      subject: this.state.subject,
+      onSubjectInput: (e) => { const v = e.target.value; this.setState({ subject: v }, () => this.persist()); },
+      promptDisplay: prompt || '여기에 선택한 구도가 프롬프트로 조합됩니다…',
+      wordCount: wc,
+      copyBtnStyle,
+      copyLabel: this.state.copied ? '복사 완료' : '프롬프트 복사',
+      copyIcon: this.state.copied ? 'check' : 'content_copy',
+      onCopy: () => this.copy(),
+      onClearAll: () => this.clearAll(),
+      copied: this.state.copied
+    };
+  }
+
+  segStyle(active) {
+    return "padding: 8px 16px; border-radius: 999px; border: none; font-size: 13.5px; font-weight: 700; cursor: pointer; transition: all .15s; font-family: 'Noto Sans KR',sans-serif; " + (active ? "background: #ffffff; color: #2054dc; box-shadow: 0 1px 3px rgba(0,0,0,0.12);" : "background: transparent; color: #6b7280;");
+  }
+}
+
+</script>
+</body>
+</html>
